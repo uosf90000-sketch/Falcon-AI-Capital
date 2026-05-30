@@ -1,8 +1,9 @@
 """
-Musaffa Client — 3 طرق بالترتيب:
-  1. تسجيل دخول Musaffa (email + password) ← الأفضل
-  2. Zoya Finance API (بديل مجاني)
-  3. قوائم محلية مُدقّقة (احتياطي دائم)
+Musaffa Client — 4 طرق بالترتيب:
+  1. كوكيز محفوظة من المتصفح (MUSAFFA_COOKIES) ← الأفضل عند وجود OTP
+  2. تسجيل دخول Musaffa (email + password) بدون OTP
+  3. Zoya Finance API (بديل مجاني)
+  4. قوائم محلية مُدقّقة (احتياطي دائم)
 """
 
 import os
@@ -55,6 +56,8 @@ class MusaffaClient:
         "Accept-Language": "en-US,en;q=0.9",
     }
 
+    COOKIES_FILE = Path("cache/musaffa_session.json")
+
     def __init__(
         self,
         api_key:  str = "",
@@ -67,11 +70,15 @@ class MusaffaClient:
         self.password  = password  or os.getenv("MUSAFFA_PASSWORD", "")
         self.zoya_key  = zoya_key  or os.getenv("ZOYA_API_KEY",     "")
 
+        # كوكيز يدوية من المتصفح (عند وجود OTP)
+        self._cookies_env = os.getenv("MUSAFFA_COOKIES", "")
+
         self._session   = requests.Session()
         self._session.headers.update(self.HEADERS)
         self._logged_in = False
 
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        self.COOKIES_FILE.parent.mkdir(parents=True, exist_ok=True)
 
     # ── نقطة الدخول ──────────────────────────────────────────────────────────
 
@@ -82,28 +89,36 @@ class MusaffaClient:
         if cached:
             return cached
 
-        # 1. Musaffa API رسمي (إذا عنده مفتاح)
+        # 1. Musaffa API رسمي
         if self.api_key:
             r = self._musaffa_api(ticker)
             if r:
                 return self._cache_and_return(ticker, r)
 
-        # 2. Musaffa login + scrape
-        if self.email and self.password:
-            if not self._logged_in:
-                self._musaffa_login()
+        # 2. كوكيز من المتصفح (حل OTP)
+        if not self._logged_in:
+            self._load_session()
+
+        if self._logged_in:
+            r = self._musaffa_scrape(ticker)
+            if r:
+                return self._cache_and_return(ticker, r)
+
+        # 3. login تقليدي (بدون OTP)
+        if self.email and self.password and not self._logged_in:
+            self._musaffa_login()
             if self._logged_in:
                 r = self._musaffa_scrape(ticker)
                 if r:
                     return self._cache_and_return(ticker, r)
 
-        # 3. Zoya Finance
+        # 4. Zoya Finance
         if self.zoya_key:
             r = self._zoya(ticker)
             if r:
                 return self._cache_and_return(ticker, r)
 
-        # 4. قوائم محلية
+        # 5. قوائم محلية
         return self._cache_and_return(ticker, self._local_lists(ticker))
 
     def screen_list(self, tickers: list[str]) -> dict:
@@ -134,7 +149,58 @@ class MusaffaClient:
             logger.warning(f"Musaffa API error {ticker}: {e}")
             return None
 
-    # ── 2. Musaffa Login ──────────────────────────────────────────────────────
+    # ── 2. كوكيز المتصفح (حل OTP) ────────────────────────────────────────────
+
+    def _load_session(self):
+        """
+        يحمّل الكوكيز من مصدرين:
+          أ) MUSAFFA_COOKIES في env (Railway) — JSON string
+          ب) ملف cache/musaffa_session.json — محفوظ من setup_musaffa.py
+        """
+        # أ) من env مباشرة
+        if self._cookies_env:
+            try:
+                cookies = json.loads(self._cookies_env)
+                if isinstance(cookies, list):
+                    # صيغة Cookie-Editor (قائمة objects)
+                    for c in cookies:
+                        self._session.cookies.set(c["name"], c["value"])
+                elif isinstance(cookies, dict):
+                    # صيغة بسيطة {name: value}
+                    for name, value in cookies.items():
+                        self._session.cookies.set(name, value)
+                self._logged_in = True
+                logger.info("Musaffa: كوكيز من env محمّلة ✅")
+                return
+            except Exception as e:
+                logger.warning(f"MUSAFFA_COOKIES parse error: {e}")
+
+        # ب) من ملف محفوظ
+        if not self.COOKIES_FILE.exists():
+            return
+        try:
+            data     = json.loads(self.COOKIES_FILE.read_text())
+            saved_at = datetime.fromisoformat(data.get("_saved_at", "2000-01-01"))
+            if datetime.now() - saved_at > timedelta(days=30):
+                logger.info("Musaffa: الكوكيز انتهت صلاحيتها — سجّل دخول من جديد")
+                return
+            for name, value in data.get("cookies", {}).items():
+                self._session.cookies.set(name, value)
+            self._logged_in = True
+            logger.info("Musaffa: كوكيز من الملف محمّلة ✅")
+        except Exception as e:
+            logger.warning(f"Session file load error: {e}")
+
+    def save_session(self):
+        """احفظ الكوكيز الحالية — استخدمه بعد تسجيل الدخول اليدوي"""
+        cookies = {k: v for k, v in self._session.cookies.items()}
+        self.COOKIES_FILE.write_text(json.dumps({
+            "_saved_at": datetime.now().isoformat(),
+            "cookies": cookies,
+        }, ensure_ascii=False, indent=2))
+        logger.info(f"Session saved → {self.COOKIES_FILE}")
+
+    # ── 3. Musaffa Login تقليدي ───────────────────────────────────────────────
 
     def _musaffa_login(self):
         """
