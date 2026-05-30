@@ -1,33 +1,31 @@
 """
-نقطة تشغيل البوت
-─────────────────
-ضع مفاتيحك هنا أو استخدم متغيرات البيئة:
-
-  ALPACA_KEY=xxx ALPACA_SECRET=yyy python run_bot.py
-
-Paper trading افتراضي — غيّر ALPACA_PAPER=false للتداول الحقيقي.
+Falcon AI Capital — نقطة التشغيل
+──────────────────────────────────
+ضع مفاتيحك هنا ثم شغّل:
+  python run_bot.py
 """
 
 import os
-import sys
 import logging
+import sys
+
+# ── ضع مفاتيحك هنا ───────────────────────────────────────────────────────────
+os.environ["ALPACA_KEY"]    = "PKSM3LOLTJZUCJEOGZORVHAPTF"
+os.environ["ALPACA_SECRET"] = "8Sjf2pdy1h675kvYY1ArwrSjNoAPNw7vbF1sx56VKmwU"
+os.environ["ALPACA_PAPER"]  = "true"   # true = paper trading | false = حقيقي
+os.environ["ZOYA_KEY"]      = ""       # اختياري — ضع مفتاح Zoya إذا عندك
+# ─────────────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
+    format="%(asctime)s | %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
         logging.FileHandler("falcon_bot.log", encoding="utf-8"),
     ],
 )
 
-# ── اختياري: ضع مفاتيحك مباشرة (لا تحفظهم في git) ──────────────────────────
-# os.environ["ALPACA_KEY"]    = "PKXXXXXXXXXXXXXXX"
-# os.environ["ALPACA_SECRET"] = "XXXXXXXXXXXXXXXXX"
-# os.environ["ZOYA_KEY"]      = "zoya_key_here"
-# os.environ["ALPACA_PAPER"]  = "true"   ← paper trading
-
-from bot.sharia_bot import ShariaBot
+from bot.falcon_bot import FalconBot
 
 if __name__ == "__main__":
-    ShariaBot().run()
+    FalconBot().run()
