@@ -118,7 +118,7 @@ class MusaffaClient:
             if r:
                 return self._cache_and_return(ticker, r)
 
-        # 5. قوائم محلية
+        # 5. ETF universe (SPUS/HLAL) + قوائم محلية
         return self._cache_and_return(ticker, self._local_lists(ticker))
 
     def screen_list(self, tickers: list[str]) -> dict:
@@ -313,7 +313,7 @@ class MusaffaClient:
             logger.warning(f"Zoya error {ticker}: {e}")
             return None
 
-    # ── 4. قوائم محلية ───────────────────────────────────────────────────────
+    # ── 4. قوائم محلية + ETF universe ────────────────────────────────────────
 
     def _local_lists(self, ticker: str) -> dict:
         if ticker in _HARAM:
@@ -321,8 +321,16 @@ class MusaffaClient:
         if ticker in _HAS_PURIF:
             return self._make(ticker, False, 0, "COMPLIANT", "حلال لكن فيه تطهير > 0%")
         if ticker in _HALAL_ZERO:
-            return self._make(ticker, True,  0, "COMPLIANT", "")
-        # مجهول → رفض احتياطاً
+            return self._make(ticker, True, 0, "COMPLIANT", "")
+
+        # تحقق من ETFs (SPUS / HLAL) — يتحدث تلقائياً كل أسبوع
+        try:
+            from halal_universe import is_halal as etf_halal
+            if etf_halal(ticker):
+                return self._make(ticker, True, 0, "COMPLIANT", "")
+        except Exception:
+            pass
+
         return self._make(ticker, False, None, "UNKNOWN",
                           "غير موجود في قواعد البيانات — مرفوض احتياطاً")
 
