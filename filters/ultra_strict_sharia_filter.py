@@ -115,10 +115,14 @@ class UltraStrictShariaFilter:
     CACHE_DIR = Path("cache/ultra_strict")
     CACHE_TTL_HOURS = 24
 
+    ZOYA_ENDPOINT = "https://api.zoya.finance/graphql"
+    ZOYA_SANDBOX_ENDPOINT = "https://sandbox-api.zoya.finance/graphql"
+
     def __init__(
         self,
         zoya_api_key: str = "",
         fltrna_api_key: str = "",
+        zoya_sandbox: bool = False,
     ):
         if not zoya_api_key:
             raise ValueError("Zoya API key is required for UltraStrictShariaFilter")
@@ -127,6 +131,9 @@ class UltraStrictShariaFilter:
 
         self.zoya_key = zoya_api_key
         self.fltrna_key = fltrna_api_key
+        self._zoya_endpoint = (
+            self.ZOYA_SANDBOX_ENDPOINT if zoya_sandbox else self.ZOYA_ENDPOINT
+        )
         self.CACHE_DIR.mkdir(parents=True, exist_ok=True)
         self._session = requests.Session()
         self._session.headers.update({
@@ -280,7 +287,7 @@ class UltraStrictShariaFilter:
         """
         try:
             resp = self._session.post(
-                "https://api.zoya.finance/graphql",
+                self._zoya_endpoint,
                 json={"query": query, "variables": {"ticker": ticker}},
                 headers={"Authorization": f"Bearer {self.zoya_key}"},
                 timeout=10,
