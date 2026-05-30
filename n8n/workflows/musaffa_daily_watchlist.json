@@ -1,0 +1,134 @@
+{
+  "name": "Musaffa — فحص يومي لقائمة المراقبة",
+  "nodes": [
+    {
+      "id": "node-schedule",
+      "name": "جدولة يومية",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * 1-5"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "node-watchlist",
+      "name": "قائمة المراقبة",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ✏️ عدّل هذه القائمة حسب اختيارك\nconst WATCHLIST = [\n  // أمن سيبراني\n  'PANW', 'CRWD', 'FTNT', 'ZS', 'OKTA',\n  // برامج هندسية\n  'ANSS', 'SNPS', 'CDNS',\n  // خدمات تقنية\n  'EPAM', 'GLOB',\n  // رعاية صحية\n  'IDXX', 'HOLX', 'PODD',\n  // طاقة متجددة\n  'NEE', 'BEP',\n  // صناعية\n  'ROK', 'NOVT'\n];\n\nreturn WATCHLIST.map(ticker => ({ json: { ticker } }));"
+      }
+    },
+    {
+      "id": "node-musaffa",
+      "name": "Musaffa API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [680, 300],
+      "continueOnFail": true,
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.musaffa.com/v1/instruments/' + $json.ticker }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apiKey",
+              "value": "={{ $env.MUSAFFA_API_KEY }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      }
+    },
+    {
+      "id": "node-evaluate",
+      "name": "تقييم الحالة الشرعية",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const ticker = $('قائمة المراقبة').item.json.ticker;\nconst data = $json;\n\nif (data.error || data.message) {\n  return { json: { ticker, halal: false, status: 'ERROR', purification_rate: null, sector: '', reason: 'API Error' } };\n}\n\nconst status = data.shariaComplianceStatus ?? 'UNKNOWN';\nconst purification = parseFloat(data.purificationPercentage ?? 0);\nconst isHalal = status === 'COMPLIANT' && purification === 0;\n\nreturn {\n  json: {\n    ticker,\n    halal: isHalal,\n    purification_rate: purification,\n    status,\n    sector: data.businessSector ?? '',\n    reason: isHalal ? '' : (\n      status !== 'COMPLIANT'\n        ? `الحالة: ${status}`\n        : `تطهير ${purification}%`\n    )\n  }\n};"
+      }
+    },
+    {
+      "id": "node-summary",
+      "name": "تجميع وتلخيص",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const all = $input.all().map(i => i.json);\nconst today = new Date().toLocaleDateString('ar-SA', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });\n\nconst halal = all.filter(r => r.halal);\nconst rejected = all.filter(r => !r.halal);\n\nconst lines = [\n  `📅 ${today}`,\n  ``,\n  `✅ الأسهم الحلال (تطهير 0%) — ${halal.length} سهم:`,\n  ...halal.map(r => `  • ${r.ticker}  (${r.sector || 'غير محدد'})`),\n  ``,\n  `❌ المرفوضة — ${rejected.length} سهم:`,\n  ...rejected.map(r => `  • ${r.ticker}: ${r.reason}`)\n];\n\nreturn [{\n  json: {\n    message: lines.join('\\n'),\n    halal_tickers: halal.map(r => r.ticker),\n    rejected_tickers: rejected.map(r => r.ticker),\n    total: all.length,\n    halal_count: halal.length,\n    date: today\n  }\n}];"
+      }
+    },
+    {
+      "id": "node-notify",
+      "name": "إرسال الإشعار",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1340, 300],
+      "continueOnFail": true,
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NOTIFY_WEBHOOK_URL }}",
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ $json }}",
+        "options": {
+          "timeout": 5000
+        }
+      }
+    }
+  ],
+  "connections": {
+    "جدولة يومية": {
+      "main": [
+        [{ "node": "قائمة المراقبة", "type": "main", "index": 0 }]
+      ]
+    },
+    "قائمة المراقبة": {
+      "main": [
+        [{ "node": "Musaffa API", "type": "main", "index": 0 }]
+      ]
+    },
+    "Musaffa API": {
+      "main": [
+        [{ "node": "تقييم الحالة الشرعية", "type": "main", "index": 0 }]
+      ]
+    },
+    "تقييم الحالة الشرعية": {
+      "main": [
+        [{ "node": "تجميع وتلخيص", "type": "main", "index": 0 }]
+      ]
+    },
+    "تجميع وتلخيص": {
+      "main": [
+        [{ "node": "إرسال الإشعار", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "staticData": null,
+  "tags": ["halal", "musaffa", "daily", "watchlist"],
+  "triggerCount": 1,
+  "versionId": "1"
+}
