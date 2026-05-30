@@ -65,13 +65,18 @@ def check():
 
 @app.route("/daily")
 def daily():
-    """أسهم اليوم — الحلال النقية مع الأسعار."""
-    prices   = get_prices(HALAL_TICKERS)
-    now_ny   = datetime.now(NY)
-    today    = now_ny.strftime("%A، %d %B %Y")
+    """أسهم اليوم — الحلال النقية فقط (تطهير 0% مؤكد)."""
+    prices = get_prices(HALAL_TICKERS)
+    now_ny = datetime.now(NY)
+    today  = now_ny.strftime("%A، %d %B %Y")
 
     stocks = []
     for t in HALAL_TICKERS:
+        # فلتر مزدوج — لا يظهر السهم إلا إذا اجتاز الفلتر الشرعي بالكامل
+        check = sharia_list.check(t)
+        if check["decision"] != "BUY_ALLOWED" or check["purification"] != 0.0:
+            continue
+
         p = prices.get(t, {})
         stocks.append({
             "ticker": t,
