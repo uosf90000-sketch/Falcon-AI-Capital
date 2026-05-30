@@ -1,6 +1,8 @@
 """
-Musaffa Client — يسحب بيانات الحلال من موقع musaffa.com
-بدون API key — يقرأ صفحة السهم مباشرة.
+Musaffa Client — 3 طرق بالترتيب:
+  1. تسجيل دخول Musaffa (email + password) ← الأفضل
+  2. Zoya Finance API (بديل مجاني)
+  3. قوائم محلية مُدقّقة (احتياطي دائم)
 """
 
 import os
@@ -13,12 +15,32 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import requests
-from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
 CACHE_DIR = Path("cache/musaffa")
 CACHE_TTL  = timedelta(hours=24)
+
+# ── قوائم محلية احتياطية ─────────────────────────────────────────────────────
+_HARAM = {
+    "JPM","BAC","WFC","C","GS","MS","AXP","COF","DFS",          # بنوك
+    "MET","PRU","AIG","AFL","ALL","CB","TRV","PGR",              # تأمين
+    "PM","MO","BTI","STZ","BUD","TAP",                           # كحول/تبغ
+    "MGM","WYNN","LVS","CZR","DKNG",                             # قمار
+    "LMT","RTX","NOC","GD","BA",                                 # أسلحة
+}
+_HAS_PURIF = {
+    "AAPL","NVDA","MSFT","GOOGL","GOOG","AMZN","META","TSLA",
+    "AMGN","GILD",
+}
+_HALAL_ZERO = {
+    "PANW","CRWD","FTNT","ZS","OKTA",
+    "ANSS","SNPS","CDNS","PTC",
+    "EPAM","GLOB",
+    "IDXX","HOLX","PODD","INSP",
+    "ROK","NOVT","ESAB",
+    "NEE","BEP","CWEN",
+}
 
 
 class MusaffaClient:
@@ -29,302 +51,269 @@ class MusaffaClient:
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/124.0.0.0 Safari/537.36"
         ),
+        "Accept": "application/json, text/html, */*",
         "Accept-Language": "en-US,en;q=0.9",
-        "Accept": "text/html,application/xhtml+xml,application/json,*/*;q=0.8",
     }
 
-    def __init__(self, api_key: str = ""):
-        # api_key اختياري — إذا عندك استخدمه، وإلا scraping
-        self.api_key = api_key or os.getenv("MUSAFFA_API_KEY", "")
-        self._session = requests.Session()
+    def __init__(
+        self,
+        api_key:  str = "",
+        email:    str = "",
+        password: str = "",
+        zoya_key: str = "",
+    ):
+        self.api_key   = api_key   or os.getenv("MUSAFFA_API_KEY",  "")
+        self.email     = email     or os.getenv("MUSAFFA_EMAIL",    "")
+        self.password  = password  or os.getenv("MUSAFFA_PASSWORD", "")
+        self.zoya_key  = zoya_key  or os.getenv("ZOYA_API_KEY",     "")
+
+        self._session   = requests.Session()
         self._session.headers.update(self.HEADERS)
+        self._logged_in = False
+
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-    # ── نقطة الدخول الرئيسية ─────────────────────────────────────────────────
+    # ── نقطة الدخول ──────────────────────────────────────────────────────────
 
     def is_halal_zero(self, ticker: str) -> dict:
-        """
-        يرجع:
-          halal=True  فقط إذا COMPLIANT + purification == 0.0
-          halal=False في أي حالة أخرى
-        """
         ticker = ticker.upper().strip()
 
         cached = self._load_cache(ticker)
         if cached:
             return cached
 
-        # جرب API أولاً إذا عنده مفتاح
+        # 1. Musaffa API رسمي (إذا عنده مفتاح)
         if self.api_key:
-            result = self._via_api(ticker)
-            if result:
-                self._save_cache(ticker, result)
-                return result
+            r = self._musaffa_api(ticker)
+            if r:
+                return self._cache_and_return(ticker, r)
 
-        # بدون مفتاح → scrape الموقع
-        result = self._via_scrape(ticker)
-        if result:
-            self._save_cache(ticker, result)
-            return result
+        # 2. Musaffa login + scrape
+        if self.email and self.password:
+            if not self._logged_in:
+                self._musaffa_login()
+            if self._logged_in:
+                r = self._musaffa_scrape(ticker)
+                if r:
+                    return self._cache_and_return(ticker, r)
 
-        # لم نجد بيانات
-        return {
-            "ticker": ticker,
-            "halal": False,
-            "purification_rate": None,
-            "status": "UNKNOWN",
-            "sector": "",
-            "reason": "لم يُعثر على بيانات — مرفوض احتياطاً",
-        }
+        # 3. Zoya Finance
+        if self.zoya_key:
+            r = self._zoya(ticker)
+            if r:
+                return self._cache_and_return(ticker, r)
+
+        # 4. قوائم محلية
+        return self._cache_and_return(ticker, self._local_lists(ticker))
 
     def screen_list(self, tickers: list[str]) -> dict:
         halal, rejected = [], {}
-        for ticker in tickers:
-            r = self.is_halal_zero(ticker)
+        for t in tickers:
+            r = self.is_halal_zero(t)
             if r["halal"]:
-                halal.append(ticker)
+                halal.append(t)
             else:
-                rejected[ticker] = r["reason"]
-            time.sleep(0.4)          # لا تُغرق الموقع
-        return {
-            "halal": halal,
-            "rejected": rejected,
-            "total": len(tickers),
-            "halal_count": len(halal),
-        }
+                rejected[t] = r["reason"]
+            time.sleep(0.5)
+        return {"halal": halal, "rejected": rejected,
+                "total": len(tickers), "halal_count": len(halal)}
 
-    # ── طريقة 1: API رسمي (إذا توفّر المفتاح) ───────────────────────────────
+    # ── 1. Musaffa API رسمي ───────────────────────────────────────────────────
 
-    def _via_api(self, ticker: str) -> Optional[dict]:
+    def _musaffa_api(self, ticker: str) -> Optional[dict]:
         try:
-            resp = self._session.get(
+            r = self._session.get(
                 f"https://api.musaffa.com/v1/instruments/{ticker}",
-                headers={"apiKey": self.api_key},
-                timeout=10,
+                headers={"apiKey": self.api_key}, timeout=10,
             )
-            if resp.status_code in (401, 403, 404):
+            if r.status_code in (401, 403, 404):
                 return None
-            resp.raise_for_status()
-            data = resp.json()
-            return self._parse_api_response(ticker, data)
+            r.raise_for_status()
+            return self._parse(ticker, r.json())
         except Exception as e:
-            logger.warning(f"API failed for {ticker}: {e}")
+            logger.warning(f"Musaffa API error {ticker}: {e}")
             return None
 
-    def _parse_api_response(self, ticker: str, data: dict) -> dict:
-        status      = data.get("shariaComplianceStatus", "")
-        purification = float(data.get("purificationPercentage") or 0)
-        halal        = status == "COMPLIANT" and purification == 0.0
-        return {
-            "ticker": ticker,
-            "halal": halal,
-            "purification_rate": purification,
-            "status": status,
-            "sector": data.get("businessSector", ""),
-            "reason": "" if halal else (
-                f"الحالة: {status}" if status != "COMPLIANT"
-                else f"تطهير {purification}% > 0%"
-            ),
-        }
+    # ── 2. Musaffa Login ──────────────────────────────────────────────────────
 
-    # ── طريقة 2: Scraping موقع Musaffa ───────────────────────────────────────
-
-    def _via_scrape(self, ticker: str) -> Optional[dict]:
+    def _musaffa_login(self):
         """
-        يفتح صفحة musaffa.com/stock/TICKER ويستخرج:
-          - الحالة الشرعية
-          - نسبة التطهير
+        يسجّل دخول Musaffa بـ email/password.
+        يحتاج: MUSAFFA_EMAIL و MUSAFFA_PASSWORD في .env
         """
-        url = f"https://musaffa.com/stock/{ticker}"
         try:
-            resp = self._session.get(url, timeout=15)
-            if resp.status_code == 404:
-                logger.info(f"Musaffa: {ticker} غير موجود في الموقع")
-                return None
-            resp.raise_for_status()
-        except Exception as e:
-            logger.warning(f"Scrape fetch failed {ticker}: {e}")
-            return None
+            # أ) جيب CSRF token (NextAuth)
+            csrf = self._session.get(
+                "https://musaffa.com/api/auth/csrf", timeout=10
+            ).json().get("csrfToken", "")
 
-        # ── محاولة 1: JSON داخل __NEXT_DATA__ (Next.js) ─────────────────────
-        result = self._parse_nextjs_data(ticker, resp.text)
-        if result:
-            return result
-
-        # ── محاولة 2: JSON-LD أو window.__data__ ────────────────────────────
-        result = self._parse_inline_json(ticker, resp.text)
-        if result:
-            return result
-
-        # ── محاولة 3: قراءة HTML مباشرة ─────────────────────────────────────
-        return self._parse_html(ticker, resp.text)
-
-    def _parse_nextjs_data(self, ticker: str, html: str) -> Optional[dict]:
-        """موقع Musaffa مبني بـ Next.js — البيانات موجودة في __NEXT_DATA__"""
-        try:
-            match = re.search(
-                r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',
-                html, re.DOTALL
+            # ب) سجّل دخول
+            resp = self._session.post(
+                "https://musaffa.com/api/auth/callback/credentials",
+                data={
+                    "email":       self.email,
+                    "password":    self.password,
+                    "csrfToken":   csrf,
+                    "callbackUrl": "https://musaffa.com/",
+                    "json":        "true",
+                },
+                timeout=15,
+                allow_redirects=True,
             )
-            if not match:
-                return None
 
-            data = json.loads(match.group(1))
+            # تحقق من نجاح الدخول
+            if resp.ok and "session" in self._session.cookies.get_dict():
+                self._logged_in = True
+                logger.info("Musaffa: تسجيل الدخول نجح ✅")
+            else:
+                # جرّب endpoint بديل
+                resp2 = self._session.post(
+                    "https://musaffa.com/api/user/login",
+                    json={"email": self.email, "password": self.password},
+                    timeout=15,
+                )
+                self._logged_in = resp2.ok
+                if self._logged_in:
+                    logger.info("Musaffa: دخول عبر /api/user/login ✅")
+                else:
+                    logger.warning("Musaffa: فشل تسجيل الدخول")
 
-            # تصفح الـ JSON للبحث عن compliance data
-            props = data.get("props", {}).get("pageProps", {})
+        except Exception as e:
+            logger.error(f"Musaffa login exception: {e}")
+            self._logged_in = False
 
-            # جرّب مسارات شائعة
-            for key in ("stockData", "instrument", "stock", "data"):
-                item = props.get(key, {})
-                if isinstance(item, dict):
-                    result = self._extract_from_dict(ticker, item)
+    def _musaffa_scrape(self, ticker: str) -> Optional[dict]:
+        """يسحب بيانات السهم بعد تسجيل الدخول"""
+        # جرّب API داخلي أولاً
+        for endpoint in [
+            f"https://musaffa.com/api/stocks/{ticker}/compliance",
+            f"https://musaffa.com/api/v1/instruments/{ticker}",
+            f"https://musaffa.com/api/screener/stocks/{ticker}",
+        ]:
+            try:
+                r = self._session.get(endpoint, timeout=10)
+                if r.ok and r.headers.get("content-type", "").startswith("application/json"):
+                    result = self._parse(ticker, r.json())
                     if result:
                         return result
+            except Exception:
+                continue
 
-            # بحث عميق
-            return self._deep_search(ticker, props)
-
+        # ثم اقرأ صفحة السهم HTML
+        try:
+            r = self._session.get(
+                f"https://musaffa.com/stock/{ticker}", timeout=15
+            )
+            if not r.ok:
+                return None
+            return self._parse_nextjs(ticker, r.text)
         except Exception as e:
-            logger.debug(f"NextJS parse failed {ticker}: {e}")
+            logger.warning(f"Musaffa scrape error {ticker}: {e}")
             return None
 
-    def _parse_inline_json(self, ticker: str, html: str) -> Optional[dict]:
-        """يبحث عن JSON مضمّن في الصفحة (window.* أو JSON-LD)"""
+    # ── 3. Zoya Finance ───────────────────────────────────────────────────────
+
+    def _zoya(self, ticker: str) -> Optional[dict]:
+        query = """
+        query($t: String!) {
+          stockReport(ticker: $t) {
+            ticker complianceStatus purificationRatio businessSector
+          }
+        }"""
         try:
-            # JSON-LD
-            for match in re.finditer(
-                r'<script[^>]+type="application/ld\+json"[^>]*>(.*?)</script>',
-                html, re.DOTALL
-            ):
-                try:
-                    obj = json.loads(match.group(1))
-                    r = self._extract_from_dict(ticker, obj)
-                    if r:
-                        return r
-                except Exception:
-                    continue
-
-            # window.* assignments
-            for match in re.finditer(
-                r'window\.__\w+\s*=\s*(\{.*?\});', html, re.DOTALL
-            ):
-                try:
-                    obj = json.loads(match.group(1))
-                    r = self._deep_search(ticker, obj)
-                    if r:
-                        return r
-                except Exception:
-                    continue
-        except Exception as e:
-            logger.debug(f"Inline JSON parse failed {ticker}: {e}")
-        return None
-
-    def _parse_html(self, ticker: str, html: str) -> Optional[dict]:
-        """قراءة HTML مباشرة بـ BeautifulSoup"""
-        try:
-            soup = BeautifulSoup(html, "lxml")
-
-            # ── نسبة التطهير ─────────────────────────────────────────────────
-            purification = 0.0
-            for el in soup.find_all(string=re.compile(r'purif|تطهير', re.I)):
-                nums = re.findall(r'[\d.]+', str(el.parent))
-                if nums:
-                    purification = float(nums[0])
-                    break
-
-            # ── الحالة الشرعية ───────────────────────────────────────────────
-            status = "UNKNOWN"
-            text   = soup.get_text(" ").upper()
-
-            if "NON_COMPLIANT" in text or "NON-COMPLIANT" in text:
-                status = "NON_COMPLIANT"
-            elif "COMPLIANT" in text:
-                status = "COMPLIANT"
-            elif "QUESTIONABLE" in text or "DOUBTFUL" in text:
-                status = "QUESTIONABLE"
-            elif "HALAL" in text:
-                status = "COMPLIANT"
-            elif "HARAM" in text or "NOT PERMISSIBLE" in text:
-                status = "NON_COMPLIANT"
-
-            if status == "UNKNOWN":
+            r = self._session.post(
+                "https://api.zoya.finance/graphql",
+                json={"query": query, "variables": {"t": ticker}},
+                headers={"Authorization": f"Bearer {self.zoya_key}"},
+                timeout=10,
+            )
+            r.raise_for_status()
+            d = r.json().get("data", {}).get("stockReport") or {}
+            if not d:
                 return None
-
-            halal = status == "COMPLIANT" and purification == 0.0
+            status = d.get("complianceStatus", "")
+            purif  = round(float(d.get("purificationRatio") or 0) * 100, 4)
+            halal  = status == "COMPLIANT" and purif == 0.0
             return {
-                "ticker": ticker,
-                "halal": halal,
-                "purification_rate": purification,
-                "status": status,
-                "sector": "",
+                "ticker": ticker, "halal": halal,
+                "purification_rate": purif, "status": status,
+                "sector": d.get("businessSector", ""),
                 "reason": "" if halal else (
-                    f"الحالة: {status}" if status != "COMPLIANT"
-                    else f"تطهير {purification}% > 0%"
+                    f"Zoya: {status}" if status != "COMPLIANT"
+                    else f"تطهير {purif}%"
                 ),
             }
         except Exception as e:
-            logger.warning(f"HTML parse failed {ticker}: {e}")
+            logger.warning(f"Zoya error {ticker}: {e}")
             return None
 
-    # ── أدوات مساعدة ─────────────────────────────────────────────────────────
+    # ── 4. قوائم محلية ───────────────────────────────────────────────────────
 
-    def _extract_from_dict(self, ticker: str, d: dict) -> Optional[dict]:
-        """يستخرج compliance من dict إذا وجد المفاتيح المطلوبة"""
-        status_keys = [
-            "shariaComplianceStatus", "complianceStatus",
-            "sharia_status", "islamicStatus", "status",
-        ]
-        purif_keys  = [
-            "purificationPercentage", "purificationRatio",
-            "purification", "purif_pct",
-        ]
+    def _local_lists(self, ticker: str) -> dict:
+        if ticker in _HARAM:
+            return self._make(ticker, False, 0, "NON_COMPLIANT", "سهم محظور")
+        if ticker in _HAS_PURIF:
+            return self._make(ticker, False, 0, "COMPLIANT", "حلال لكن فيه تطهير > 0%")
+        if ticker in _HALAL_ZERO:
+            return self._make(ticker, True,  0, "COMPLIANT", "")
+        # مجهول → رفض احتياطاً
+        return self._make(ticker, False, None, "UNKNOWN",
+                          "غير موجود في قواعد البيانات — مرفوض احتياطاً")
 
-        status = None
-        for k in status_keys:
-            if k in d and d[k]:
-                status = str(d[k]).upper()
+    # ── مساعدات ──────────────────────────────────────────────────────────────
+
+    def _parse(self, ticker: str, d: dict) -> Optional[dict]:
+        for sk in ("shariaComplianceStatus","complianceStatus","islamicStatus","status"):
+            status = d.get(sk)
+            if status:
                 break
-
-        if not status:
+        else:
             return None
 
-        purification = 0.0
-        for k in purif_keys:
-            if k in d and d[k] is not None:
-                purification = float(d[k])
-                # تحويل نسبة عشرية إلى مئوية
-                if 0 < purification < 1:
-                    purification *= 100
-                break
-
-        # توحيد الحالة
-        if "NON" in status or "HARAM" in status or "NOT" in status:
+        status = str(status).upper()
+        if "NON" in status or "HARAM" in status:
             status = "NON_COMPLIANT"
-        elif "COMPLIANT" in status or "HALAL" in status or "PERMISSIBLE" in status:
+        elif "COMPLIANT" in status or "HALAL" in status:
             status = "COMPLIANT"
         elif "QUESTION" in status or "DOUBT" in status:
             status = "QUESTIONABLE"
 
-        halal = status == "COMPLIANT" and purification == 0.0
+        purif = 0.0
+        for pk in ("purificationPercentage","purificationRatio","purification"):
+            v = d.get(pk)
+            if v is not None:
+                purif = float(v)
+                if 0 < purif < 1:
+                    purif *= 100
+                break
+
+        halal = status == "COMPLIANT" and purif == 0.0
         return {
-            "ticker": ticker,
-            "halal": halal,
-            "purification_rate": round(purification, 4),
-            "status": status,
+            "ticker": ticker, "halal": halal,
+            "purification_rate": round(purif, 4), "status": status,
             "sector": d.get("businessSector") or d.get("sector") or "",
             "reason": "" if halal else (
                 f"الحالة: {status}" if status != "COMPLIANT"
-                else f"تطهير {purification}% > 0%"
+                else f"تطهير {purif}%"
             ),
         }
 
+    def _parse_nextjs(self, ticker: str, html: str) -> Optional[dict]:
+        m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
+        if not m:
+            return None
+        try:
+            data  = json.loads(m.group(1))
+            props = data.get("props", {}).get("pageProps", {})
+            return self._deep_search(ticker, props)
+        except Exception:
+            return None
+
     def _deep_search(self, ticker: str, obj, depth: int = 0) -> Optional[dict]:
-        """بحث عميق في JSON متداخل"""
-        if depth > 5:
+        if depth > 6:
             return None
         if isinstance(obj, dict):
-            r = self._extract_from_dict(ticker, obj)
+            r = self._parse(ticker, obj)
             if r:
                 return r
             for v in obj.values():
@@ -338,6 +327,16 @@ class MusaffaClient:
                     return r
         return None
 
+    @staticmethod
+    def _make(ticker, halal, purif, status, reason) -> dict:
+        return {"ticker": ticker, "halal": halal,
+                "purification_rate": purif, "status": status,
+                "sector": "", "reason": reason}
+
+    def _cache_and_return(self, ticker: str, result: dict) -> dict:
+        self._save_cache(ticker, result)
+        return result
+
     # ── Cache ─────────────────────────────────────────────────────────────────
 
     def _load_cache(self, ticker: str) -> Optional[dict]:
@@ -345,16 +344,16 @@ class MusaffaClient:
         if not path.exists():
             return None
         try:
-            data = json.loads(path.read_text())
-            if datetime.now() - datetime.fromisoformat(data["_at"]) > CACHE_TTL:
+            d = json.loads(path.read_text())
+            if datetime.now() - datetime.fromisoformat(d["_at"]) > CACHE_TTL:
                 return None
-            return data
+            return d
         except Exception:
             return None
 
     def _save_cache(self, ticker: str, result: dict):
-        path = CACHE_DIR / f"{ticker}.json"
         try:
+            path = CACHE_DIR / f"{ticker}.json"
             path.write_text(json.dumps(
                 {**result, "_at": datetime.now().isoformat()},
                 ensure_ascii=False, indent=2
