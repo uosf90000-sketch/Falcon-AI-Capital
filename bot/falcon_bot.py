@@ -56,11 +56,10 @@ MAX_POSITIONS    = 5        # أقصى عدد مراكز مفتوحة في نف�
 TAKE_PROFIT_PCT  = 5.0      # هدف الربح %
 STOP_LOSS_PCT    = 2.0      # وقف الخسارة %
 
-# شروط الشراء التقني
-MA_PERIOD        = 20       # المتوسط المتحرك
+# شروط الشراء التقني (مبسّطة)
+MA_PERIOD        = 20       # المتوسط المتحرك — السعر يجب فوقه
 RSI_PERIOD       = 14
-RSI_MAX          = 65       # لا نشتري إذا RSI فوق هذا (مبالغ فيه)
-MIN_VOLUME_RATIO = 1.2      # الحجم يجب أكبر من المتوسط × هذه النسبة
+RSI_MAX          = 70       # لا نشتري إذا RSI فوق 70 (مبالغ فيه)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -181,12 +180,12 @@ class FalconBot:
             logger.info(f"  ❓ {ticker:<8} لا توجد بيانات تقنية")
             return {"buy": False}
 
-        passed = tech["above_ma"] and tech["rsi"] < RSI_MAX and tech["volume_ok"]
+        passed = tech["above_ma"] and tech["rsi"] < RSI_MAX
 
         status = (
-            f"MA={'✓' if tech['above_ma'] else '✗'}  "
-            f"RSI={tech['rsi']:.0f}({'✓' if tech['rsi']<RSI_MAX else '✗'})  "
-            f"Vol={'✓' if tech['volume_ok'] else '✗'}"
+            f"price=${tech['price']:.1f}  "
+            f"MA={tech['ma']:.1f}({'✓' if tech['above_ma'] else '✗'})  "
+            f"RSI={tech['rsi']:.0f}({'✓' if tech['rsi']<RSI_MAX else '✗'})"
         )
 
         if passed:
@@ -227,7 +226,6 @@ class FalconBot:
                 df = df.xs(ticker, level="symbol")
 
             close  = df["close"]
-            volume = df["volume"]
 
             # المتوسط المتحرك
             ma       = close.rolling(MA_PERIOD).mean().iloc[-1]
@@ -241,17 +239,11 @@ class FalconBot:
             rs    = gain.iloc[-1] / loss.iloc[-1] if loss.iloc[-1] != 0 else 100
             rsi   = 100 - (100 / (1 + rs))
 
-            # الحجم
-            avg_vol    = volume.rolling(20).mean().iloc[-1]
-            today_vol  = volume.iloc[-1]
-            volume_ok  = today_vol > avg_vol * MIN_VOLUME_RATIO
-
             return {
-                "price":     price,
-                "ma":        ma,
-                "above_ma":  above_ma,
-                "rsi":       rsi,
-                "volume_ok": volume_ok,
+                "price":    price,
+                "ma":       ma,
+                "above_ma": above_ma,
+                "rsi":      rsi,
             }
         except Exception as e:
             logger.warning(f"Technical check failed for {ticker}: {e}")
