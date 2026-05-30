@@ -6,3 +6,7 @@ cache/
 logs/
 *.log
 .DS_Store
+
+# mjabud game
+mjabud/node_modules/
+mjabud/dist/
