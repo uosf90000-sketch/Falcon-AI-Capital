@@ -9,11 +9,10 @@ import os
 import logging
 import sys
 
-# ── ضع مفاتيحك هنا ───────────────────────────────────────────────────────────
-os.environ["ALPACA_KEY"]    = "PKSM3LOLTJZUCJEOGZORVHAPTF"
-os.environ["ALPACA_SECRET"] = "8Sjf2pdy1h675kvYY1ArwrSjNoAPNw7vbF1sx56VKmwU"
-os.environ["ALPACA_PAPER"]  = "true"   # true = paper trading | false = حقيقي
-os.environ["ZOYA_KEY"]      = ""       # اختياري — ضع مفتاح Zoya إذا عندك
+# ── المفاتيح من متغيرات البيئة أو ملف .env ──────────────────────────────────
+# لا تضع المفاتيح هنا مباشرة — استخدم .env
+# مثال:
+#   ALPACA_KEY=PKxxxxxxx ALPACA_SECRET=xxxxxxx python run_bot.py
 # ─────────────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(
