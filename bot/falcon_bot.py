@@ -28,7 +28,7 @@ from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
-from filters.islamic_filter import IslamicFilter, KNOWN_HARAM, HALAL_WITH_PURIFICATION
+from filters import sharia_list
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,6 @@ class FalconBot:
 
         self.trade  = TradingClient(api_key, secret_key, paper=paper)
         self.data   = StockHistoricalDataClient(api_key, secret_key)
-        self.filter = IslamicFilter(zoya_api_key=zoya_key)
 
         mode = "📄 Paper" if paper else "💵 Live"
         logger.info(f"FalconBot جاهز [{mode}]")
@@ -200,17 +199,10 @@ class FalconBot:
     # ── الفلتر الشرعي ──────────────────────────────────────────────────────
 
     def _check_sharia(self, ticker: str) -> dict:
-        # رفض فوري من القائمة المحلية (بدون API)
-        if ticker in KNOWN_HARAM:
-            return {"halal": False, "reason": "حرام (قائمة محلية)"}
-        if ticker in HALAL_WITH_PURIFICATION:
-            return {"halal": False, "reason": "به نسبة تطهير"}
-
-        # فحص API إذا كان هناك مفتاح
-        result = self.filter.is_halal(ticker)
+        result = sharia_list.check(ticker)
         return {
-            "halal": result["halal"],
-            "reason": result.get("reason", ""),
+            "halal":  result["decision"] == "BUY_ALLOWED",
+            "reason": result["reason"],
         }
 
     # ── التحليل التقني ─────────────────────────────────────────────────────
