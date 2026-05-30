@@ -4,4 +4,6 @@ lxml>=5.0.0
 alpaca-py>=0.20.0
 pandas>=2.0.0
 numpy>=1.24.0
+flask>=3.0.0
+gunicorn>=21.0.0
 
