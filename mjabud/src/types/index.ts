@@ -40,6 +40,7 @@ export interface FieldGroup {
 export interface Player {
   id: string;
   name: string;
+  isAI: boolean;
   hand: Card[];
   capturedPile: Card[]; // individual cards captured from cover-captures
 }

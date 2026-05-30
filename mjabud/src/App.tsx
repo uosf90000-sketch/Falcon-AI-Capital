@@ -18,8 +18,8 @@ export default function App() {
     setAppPhase('setup');
   }
 
-  function handleSetup(playerNames: string[]) {
-    const state = initGame(playerNames);
+  function handleSetup(playerNames: string[], aiFlags: boolean[]) {
+    const state = initGame(playerNames, aiFlags);
     setGame(state);
     setAppPhase('game');
   }
@@ -29,8 +29,16 @@ export default function App() {
       setGame(newState);
       setAppPhase('ended');
     } else if (newState.phase === 'pass_device') {
-      setGame(newState);
-      setAppPhase('pass');
+      // Skip the PassDevice screen if the next player is an AI
+      const nextPlayer = newState.players[newState.currentPlayerIndex];
+      if (nextPlayer.isAI) {
+        const resumed = resumeTurn(newState);
+        setGame(resumed);
+        setAppPhase('game');
+      } else {
+        setGame(newState);
+        setAppPhase('pass');
+      }
     } else {
       setGame(newState);
     }

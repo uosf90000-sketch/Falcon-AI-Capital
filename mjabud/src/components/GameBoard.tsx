@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect } from 'react';
 import { Card, FieldGroup, GameState } from '../types';
 import {
   canCapture,
@@ -14,6 +14,7 @@ import {
   endTurn,
   validTargets,
 } from '../game/engine';
+import { executeAITurn } from '../game/ai';
 import { CardComponent } from './CardComponent';
 import { FieldGroupCard } from './FieldGroupCard';
 
@@ -25,6 +26,17 @@ interface Props {
 export function GameBoard({ state, onChange }: Props) {
   const player = state.players[state.currentPlayerIndex];
   const { turnPhase, selectedCardId, canCoverAfterAction } = state;
+
+  // AI auto-play: when it's an AI player's turn, run their turn after a short delay
+  useEffect(() => {
+    if (!player.isAI || turnPhase !== 'select_card') return;
+    const timer = setTimeout(() => {
+      const afterAI = executeAITurn(state);
+      const afterEnd = endTurn(afterAI);
+      onChange(afterEnd);
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [player.id, player.isAI, turnPhase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Which hand card is selected
   const selectedCard = selectedCardId
@@ -197,6 +209,12 @@ export function GameBoard({ state, onChange }: Props) {
       {/* Action Panel */}
       <div className="action-panel">
         <div className="action-message">{state.message}</div>
+
+        {player.isAI && turnPhase === 'select_card' && (
+          <div style={{ textAlign: 'center', color: 'var(--gold, #f1c40f)', fontSize: '1rem', marginBottom: 8 }}>
+            🤖 يفكر...
+          </div>
+        )}
 
         <div className="action-buttons">
           {/* Throw action */}

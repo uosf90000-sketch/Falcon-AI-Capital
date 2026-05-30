@@ -15,7 +15,7 @@ function nextGroupId(): string {
 
 // ─── Initialisation ────────────────────────────────────────────────────────
 
-export function initGame(playerNames: string[]): GameState {
+export function initGame(playerNames: string[], aiFlags: boolean[] = []): GameState {
   _gid = 0;
   const deck = shuffle(createDeck());
   let idx = 0;
@@ -23,6 +23,7 @@ export function initGame(playerNames: string[]): GameState {
   const players: Player[] = playerNames.map((name, i) => ({
     id: `p${i}`,
     name,
+    isAI: aiFlags[i] ?? false,
     hand: deck.slice(idx + i * INITIAL_HAND_SIZE, idx + (i + 1) * INITIAL_HAND_SIZE),
     capturedPile: [],
   }));

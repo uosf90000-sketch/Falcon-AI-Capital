@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 
 interface Props {
-  onStart: (names: string[]) => void;
+  onStart: (names: string[], aiFlags: boolean[]) => void;
   onBack: () => void;
 }
 
@@ -16,6 +16,10 @@ export function PlayerSetup({ onStart, onBack }: Props) {
   const [names, setNames] = useState<string[]>(
     Array.from({ length: 8 }, (_, i) => defaultName(i))
   );
+  // Default: Player 1 = human, all others = AI
+  const [aiFlags, setAiFlags] = useState<boolean[]>(
+    Array.from({ length: 8 }, (_, i) => i !== 0)
+  );
 
   const updateName = (i: number, value: string) => {
     const updated = [...names];
@@ -23,9 +27,16 @@ export function PlayerSetup({ onStart, onBack }: Props) {
     setNames(updated);
   };
 
+  const toggleAI = (i: number) => {
+    const updated = [...aiFlags];
+    updated[i] = !updated[i];
+    setAiFlags(updated);
+  };
+
   const handleStart = () => {
     const finalNames = names.slice(0, count).map((n, i) => n.trim() || defaultName(i));
-    onStart(finalNames);
+    const finalFlags = aiFlags.slice(0, count);
+    onStart(finalNames, finalFlags);
   };
 
   return (
@@ -57,14 +68,34 @@ export function PlayerSetup({ onStart, onBack }: Props) {
           {Array.from({ length: count }, (_, i) => (
             <div key={i} className="flex-col gap-8" style={{ alignItems: 'stretch' }}>
               <span className="setup-label">اللاعب {i + 1}</span>
-              <input
-                className="player-name-input"
-                type="text"
-                placeholder={defaultName(i)}
-                value={names[i]}
-                onChange={(e) => updateName(i, e.target.value)}
-                maxLength={20}
-              />
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <input
+                  className="player-name-input"
+                  type="text"
+                  placeholder={defaultName(i)}
+                  value={names[i]}
+                  onChange={(e) => updateName(i, e.target.value)}
+                  maxLength={20}
+                  style={{ flex: 1 }}
+                />
+                <button
+                  onClick={() => toggleAI(i)}
+                  title={aiFlags[i] ? 'ذكاء اصطناعي' : 'لاعب بشري'}
+                  style={{
+                    background: aiFlags[i] ? 'rgba(241,196,15,0.25)' : 'rgba(255,255,255,0.07)',
+                    border: aiFlags[i] ? '1px solid rgba(241,196,15,0.6)' : '1px solid rgba(255,255,255,0.2)',
+                    borderRadius: 8,
+                    padding: '6px 10px',
+                    cursor: 'pointer',
+                    fontSize: '1.1rem',
+                    lineHeight: 1,
+                    color: aiFlags[i] ? 'var(--gold, #f1c40f)' : 'rgba(255,255,255,0.4)',
+                    flexShrink: 0,
+                  }}
+                >
+                  🤖
+                </button>
+              </div>
             </div>
           ))}
         </div>
