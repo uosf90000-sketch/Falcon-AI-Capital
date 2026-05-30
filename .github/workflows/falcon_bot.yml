@@ -1,31 +1,18 @@
-name: Falcon Sharia Bot
+name: Falcon Sharia Telegram Bot
 
 on:
-  schedule:
-    # يشتغل كل يوم تداول الساعة 10:30 صباحاً بتوقيت نيويورك
-    # (3:30 مساءً بتوقيت السعودية)
-    - cron: '30 14 * * 1-5'   # الاثنين-الجمعة فقط
-  workflow_dispatch:            # تشغيل يدوي من GitHub بضغطة زر
+  workflow_dispatch:   # تشغيل يدوي من GitHub
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Run Falcon Bot
+      - run: pip install -r requirements.txt
+      - name: Run Telegram Bot
         env:
-          ALPACA_KEY: ${{ secrets.ALPACA_KEY }}
-          ALPACA_SECRET: ${{ secrets.ALPACA_SECRET }}
-          ALPACA_PAPER: 'true'
-        run: python run_bot.py
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        run: python telegram_bot.py
