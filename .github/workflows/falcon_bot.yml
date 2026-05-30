@@ -1,0 +1,18 @@
+name: Falcon Sharia Telegram Bot
+
+on:
+  workflow_dispatch:   # تشغيل يدوي من GitHub
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: Run Telegram Bot
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        run: python telegram_bot.py

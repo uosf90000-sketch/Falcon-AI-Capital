@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Falcon — أسهم اليوم</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f0f0f;
+      color: #fff;
+      padding: 20px 16px 40px;
+    }
+
+    .header {
+      text-align: center;
+      padding: 20px 0 24px;
+    }
+
+    .header .logo { font-size: 36px; }
+
+    .header h1 {
+      font-size: 20px;
+      font-weight: 800;
+      margin: 6px 0 4px;
+    }
+
+    .header .date {
+      font-size: 12px;
+      color: #666;
+    }
+
+    .badge {
+      display: inline-block;
+      background: #052e16;
+      color: #4ade80;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 4px 12px;
+      border-radius: 20px;
+      margin-top: 8px;
+    }
+
+    .nav {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    .nav a {
+      flex: 1;
+      text-align: center;
+      padding: 10px;
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 12px;
+      color: #aaa;
+      text-decoration: none;
+      font-size: 14px;
+    }
+
+    .nav a.active {
+      background: #1a2e1a;
+      border-color: #16a34a;
+      color: #4ade80;
+    }
+
+    .section-title {
+      font-size: 13px;
+      color: #555;
+      margin-bottom: 10px;
+      padding-right: 4px;
+    }
+
+    .stock-card {
+      background: #1a1a1a;
+      border: 1px solid #222;
+      border-radius: 14px;
+      padding: 14px 16px;
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .stock-card.up   { border-right: 3px solid #16a34a; }
+    .stock-card.down { border-right: 3px solid #dc2626; }
+    .stock-card.flat { border-right: 3px solid #555; }
+
+    .stock-left .ticker {
+      font-size: 17px;
+      font-weight: 800;
+      letter-spacing: 1px;
+    }
+
+    .stock-left .name {
+      font-size: 11px;
+      color: #666;
+      margin-top: 2px;
+      max-width: 200px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .stock-right { text-align: left; }
+
+    .stock-right .price {
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .stock-right .change {
+      font-size: 13px;
+      font-weight: 600;
+      margin-top: 2px;
+    }
+
+    .change.up   { color: #4ade80; }
+    .change.down { color: #f87171; }
+    .change.flat { color: #888; }
+
+    .halal-tag {
+      font-size: 10px;
+      background: #052e16;
+      color: #4ade80;
+      padding: 2px 7px;
+      border-radius: 10px;
+      margin-top: 4px;
+      display: inline-block;
+    }
+
+    .refresh-btn {
+      display: block;
+      width: 100%;
+      padding: 14px;
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 14px;
+      color: #666;
+      font-size: 14px;
+      text-align: center;
+      margin-top: 16px;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    .refresh-btn:active { opacity: 0.7; }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="logo">🦅</div>
+    <h1>أسهم اليوم الحلال النقية</h1>
+    <div class="date">{{ today }}</div>
+    <div class="badge">✅ {{ count }} سهم — تطهير 0%</div>
+  </div>
+
+  <div class="nav">
+    <a href="/">🔍 فحص سهم</a>
+    <a href="/daily" class="active">📋 قائمة اليوم</a>
+  </div>
+
+  <div class="section-title">مرتبة حسب الأداء اليومي</div>
+
+  {% for s in stocks %}
+  {% set cls = "up" if s.change > 0 else ("down" if s.change < 0 else "flat") %}
+  <div class="stock-card {{ cls }}">
+    <div class="stock-left">
+      <div class="ticker">{{ s.ticker }}</div>
+      <div class="name">{{ s.name }}</div>
+      <div class="halal-tag">✅ حلال 0%</div>
+    </div>
+    <div class="stock-right">
+      {% if s.price > 0 %}
+        <div class="price">${{ "%.2f"|format(s.price) }}</div>
+        <div class="change {{ cls }}">
+          {{ "+" if s.change > 0 else "" }}{{ "%.2f"|format(s.change) }}%
+        </div>
+      {% else %}
+        <div class="price" style="color:#555">—</div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+
+  <a href="/daily" class="refresh-btn">🔄 تحديث الأسعار</a>
+
+</body>
+</html>

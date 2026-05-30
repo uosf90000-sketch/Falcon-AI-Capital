@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Falcon — فلتر شرعي</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f0f0f;
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .logo {
+      font-size: 42px;
+      margin-bottom: 8px;
+    }
+
+    h1 {
+      font-size: 22px;
+      font-weight: 700;
+      margin-bottom: 4px;
+      color: #fff;
+    }
+
+    .subtitle {
+      font-size: 13px;
+      color: #888;
+      margin-bottom: 36px;
+    }
+
+    .card {
+      background: #1a1a1a;
+      border-radius: 20px;
+      padding: 28px 24px;
+      width: 100%;
+      max-width: 400px;
+      border: 1px solid #2a2a2a;
+    }
+
+    input {
+      width: 100%;
+      padding: 16px;
+      font-size: 22px;
+      font-weight: 700;
+      text-align: center;
+      letter-spacing: 3px;
+      background: #111;
+      border: 2px solid #333;
+      border-radius: 14px;
+      color: #fff;
+      outline: none;
+      margin-bottom: 16px;
+      text-transform: uppercase;
+      transition: border-color 0.2s;
+    }
+
+    input:focus { border-color: #4ade80; }
+    input::placeholder { color: #444; letter-spacing: 1px; font-weight: 400; }
+
+    button {
+      width: 100%;
+      padding: 16px;
+      font-size: 17px;
+      font-weight: 700;
+      background: #4ade80;
+      color: #000;
+      border: none;
+      border-radius: 14px;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+
+    button:active { opacity: 0.8; }
+
+    .result {
+      margin-top: 24px;
+      border-radius: 16px;
+      padding: 20px;
+      text-align: center;
+      display: none;
+    }
+
+    .result.halal {
+      background: #052e16;
+      border: 1px solid #16a34a;
+    }
+
+    .result.haram {
+      background: #2d0a0a;
+      border: 1px solid #dc2626;
+    }
+
+    .result-icon { font-size: 48px; margin-bottom: 8px; }
+
+    .result-ticker {
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: 2px;
+      margin-bottom: 6px;
+    }
+
+    .result-decision {
+      font-size: 15px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .result.halal .result-decision { color: #4ade80; }
+    .result.haram .result-decision  { color: #f87171; }
+
+    .result-reason {
+      font-size: 13px;
+      color: #aaa;
+    }
+
+    .purification {
+      margin-top: 10px;
+      font-size: 13px;
+      color: #888;
+    }
+
+    .loading { display: none; text-align: center; margin-top: 20px; color: #666; }
+
+    .history {
+      margin-top: 24px;
+      width: 100%;
+      max-width: 400px;
+    }
+
+    .history h3 {
+      font-size: 13px;
+      color: #555;
+      margin-bottom: 10px;
+    }
+
+    .history-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 14px;
+      background: #1a1a1a;
+      border-radius: 10px;
+      margin-bottom: 6px;
+      cursor: pointer;
+      border: 1px solid #222;
+    }
+
+    .history-item:active { opacity: 0.7; }
+
+    .history-ticker { font-weight: 700; font-size: 15px; }
+    .history-badge  { font-size: 12px; padding: 3px 10px; border-radius: 20px; font-weight: 600; }
+    .badge-halal    { background: #052e16; color: #4ade80; }
+    .badge-haram    { background: #2d0a0a; color: #f87171; }
+  </style>
+</head>
+<body>
+
+  <div class="logo">🦅</div>
+  <h1>Falcon Sharia</h1>
+  <p class="subtitle">فلتر شرعي — صفر تطهير فقط</p>
+
+  <div style="display:flex;gap:10px;width:100%;max-width:400px;margin-bottom:16px;">
+    <a href="/" style="flex:1;text-align:center;padding:10px;background:#1a2e1a;border:1px solid #16a34a;border-radius:12px;color:#4ade80;text-decoration:none;font-size:14px;">🔍 فحص سهم</a>
+    <a href="/daily" style="flex:1;text-align:center;padding:10px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;color:#aaa;text-decoration:none;font-size:14px;">📋 قائمة اليوم</a>
+  </div>
+
+  <div class="card">
+    <input id="ticker" type="text" placeholder="رمز السهم... PANW" maxlength="6"
+           autocomplete="off" autocorrect="off" autocapitalize="characters"
+           onkeydown="if(event.key==='Enter') checkStock()">
+    <button onclick="checkStock()">فحص</button>
+
+    <div class="loading" id="loading">جاري الفحص...</div>
+
+    <div class="result" id="result">
+      <div class="result-icon" id="icon"></div>
+      <div class="result-ticker" id="res-ticker"></div>
+      <div class="result-decision" id="decision"></div>
+      <div class="result-reason" id="reason"></div>
+      <div class="purification" id="purif"></div>
+    </div>
+  </div>
+
+  <div class="history" id="history-section" style="display:none">
+    <h3>آخر عمليات البحث</h3>
+    <div id="history-list"></div>
+  </div>
+
+  <script>
+    const history = [];
+
+    async function checkStock() {
+      const ticker = document.getElementById("ticker").value.trim().toUpperCase();
+      if (!ticker) return;
+
+      document.getElementById("result").style.display = "none";
+      document.getElementById("loading").style.display = "block";
+
+      try {
+        const resp = await fetch("/check", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ticker }),
+        });
+        const data = await resp.json();
+        showResult(data);
+        addHistory(data);
+      } catch (e) {
+        alert("خطأ في الاتصال");
+      } finally {
+        document.getElementById("loading").style.display = "none";
+      }
+    }
+
+    function showResult(data) {
+      const el = document.getElementById("result");
+      el.className = "result " + (data.halal ? "halal" : "haram");
+      el.style.display = "block";
+
+      document.getElementById("icon").textContent     = data.halal ? "✅" : "❌";
+      document.getElementById("res-ticker").textContent = data.ticker;
+      document.getElementById("decision").textContent  = data.halal ? "BUY_ALLOWED — حلال" : "SHARIA_REJECTED";
+      document.getElementById("reason").textContent    = data.reason;
+
+      const p = data.purification;
+      document.getElementById("purif").textContent =
+        p !== null ? `نسبة التطهير: ${p}%` : "";
+    }
+
+    function addHistory(data) {
+      const existing = history.findIndex(h => h.ticker === data.ticker);
+      if (existing !== -1) history.splice(existing, 1);
+      history.unshift(data);
+      if (history.length > 10) history.pop();
+      renderHistory();
+    }
+
+    function renderHistory() {
+      const section = document.getElementById("history-section");
+      const list    = document.getElementById("history-list");
+      if (history.length === 0) { section.style.display = "none"; return; }
+      section.style.display = "block";
+      list.innerHTML = history.map(h => `
+        <div class="history-item" onclick="document.getElementById('ticker').value='${h.ticker}';checkStock()">
+          <span class="history-ticker">${h.ticker}</span>
+          <span class="history-badge ${h.halal ? 'badge-halal' : 'badge-haram'}">
+            ${h.halal ? '✅ حلال' : '❌ مرفوض'}
+          </span>
+        </div>
+      `).join("");
+    }
+  </script>
+</body>
+</html>
