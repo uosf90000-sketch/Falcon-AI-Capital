@@ -1,142 +1,104 @@
 import { Card, FieldGroup, GameState } from '../types';
 import { CARD_POINTS } from './constants';
-import {
-  canCapture,
-  executeCapture,
-  executeCover,
-  executeThrow,
-  endTurn,
-  skipCover,
-} from './engine';
+import { canCapture, canPlaceCover } from './engine';
 
 function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v));
 }
 
-/** Total point value of all cards in a field group (base cards + topCard) */
 function groupValue(group: FieldGroup): number {
-  const cardSum = group.cards.reduce((sum, c) => sum + (CARD_POINTS[c.type] ?? 0), 0);
-  const topSum = group.topCard ? (CARD_POINTS[group.topCard.type] ?? 0) : 0;
-  return cardSum + topSum;
+  return group.cards.reduce((s, c) => s + (CARD_POINTS[c.type] ?? 0), 0);
 }
 
-/**
- * Find the best (card, group) capture pair.
- * Priority: maximise points captured from the group.
- * Among equal group values, prefer playing a lower-value card (save high-value for later).
- * Jokers are used only when no other option captures a given group.
- */
-function findBestCapture(
-  hand: Card[],
-  field: FieldGroup[]
-): { card: Card; group: FieldGroup } | null {
-  let best: { card: Card; group: FieldGroup; groupVal: number; cardVal: number } | null = null;
+function coverValue(group: FieldGroup): number {
+  if (!group.topCards) return 0;
+  return group.topCards.reduce((s, c) => s + (CARD_POINTS[c.type] ?? 0), 0);
+}
 
-  for (const card of hand) {
-    for (const group of field) {
+export function executeAITurn(state: GameState): GameState {
+  const s = clone(state) as GameState;
+  const player = s.players[s.currentPlayerIndex];
+
+  // ── Find best capture ──────────────────────────────────────────────────
+  let bestCardId: string | null = null;
+  let bestGroupId: string | null = null;
+  let bestScore = -1;
+
+  for (const card of player.hand) {
+    for (const group of s.field) {
       if (!canCapture(card, group)) continue;
-      const groupVal = groupValue(group);
-      const cardVal = CARD_POINTS[card.type] ?? 0;
-
-      if (!best) {
-        best = { card, group, groupVal, cardVal };
-        continue;
-      }
-
-      // Prefer higher-value group
-      if (groupVal > best.groupVal) {
-        best = { card, group, groupVal, cardVal };
-        continue;
-      }
-      if (groupVal < best.groupVal) continue;
-
-      // Same group value: prefer lower-value card (don't waste high cards)
-      if (cardVal < best.cardVal) {
-        best = { card, group, groupVal, cardVal };
-        continue;
-      }
-      // Same card value: prefer non-joker cards
-      if (card.type !== 'joker' && best.card.type === 'joker') {
-        best = { card, group, groupVal, cardVal };
+      const score = group.topCards
+        ? coverValue(group) + (CARD_POINTS[card.type] ?? 0)
+        : groupValue(group) + (CARD_POINTS[card.type] ?? 0);
+      if (score > bestScore) {
+        bestScore = score;
+        bestCardId = card.id;
+        bestGroupId = group.id;
       }
     }
   }
 
-  return best ? { card: best.card, group: best.group } : null;
-}
+  if (bestCardId && bestGroupId) {
+    const cardIdx = player.hand.findIndex((c) => c.id === bestCardId);
+    const playedCard = player.hand.splice(cardIdx, 1)[0];
+    const group = s.field.find((g) => g.id === bestGroupId)!;
 
-/**
- * After capturing, decide whether to cover a high-value owned group
- * with a zero-point card.
- * Conditions:
- *  - canCoverAfterAction must be true
- *  - There exists an owned, uncovered group with total value >= 30
- *  - There is a zero-point card in hand (prefer non-joker zero cards)
- */
-function findCoverMove(state: GameState): { coverCardId: string; groupId: string } | null {
-  if (!state.canCoverAfterAction) return null;
-
-  const player = state.players[state.currentPlayerIndex];
-
-  // Find the highest-value owned uncovered group with value >= 30
-  const ownedHighGroups = state.field
-    .filter((g) => g.ownerId === player.id && !g.topCard && groupValue(g) >= 30)
-    .sort((a, b) => groupValue(b) - groupValue(a));
-
-  if (ownedHighGroups.length === 0) return null;
-
-  // Find a zero-point card in hand (prefer non-joker)
-  const zeroPtCards = player.hand.filter((c) => (CARD_POINTS[c.type] ?? 0) === 0 && c.type !== 'joker');
-  const coverCard = zeroPtCards.length > 0
-    ? zeroPtCards[0]
-    : null; // don't use joker to cover
-
-  if (!coverCard) return null;
-
-  return { coverCardId: coverCard.id, groupId: ownedHighGroups[0].id };
-}
-
-/**
- * Choose the best card to throw when no capture is possible.
- * Strategy: throw lowest-value card, avoiding jokers if any other card exists.
- */
-function findThrowCard(hand: Card[]): Card {
-  // Prefer non-joker cards; among those, pick the one with lowest point value
-  const nonJokers = hand.filter((c) => c.type !== 'joker');
-  const pool = nonJokers.length > 0 ? nonJokers : hand;
-  return pool.reduce((worst, c) =>
-    (CARD_POINTS[c.type] ?? 0) <= (CARD_POINTS[worst.type] ?? 0) ? c : worst
-  );
-}
-
-/**
- * Execute a full AI turn and return state ready for `endTurn`.
- * This is a pure function — it clones state before mutating.
- */
-export function executeAITurn(state: GameState): GameState {
-  let s: GameState = clone(state);
-
-  const player = s.players[s.currentPlayerIndex];
-  const capture = findBestCapture(player.hand, s.field);
-
-  if (capture) {
-    // Set selectedCardId then execute capture
-    s.selectedCardId = capture.card.id;
-    s = executeCapture(s, capture.group.id);
-
-    // Decide whether to cover after capture
-    const coverMove = findCoverMove(s);
-    if (coverMove) {
-      s.selectedCardId = coverMove.coverCardId;
-      s = executeCover(s, coverMove.groupId);
+    if (group.topCards) {
+      // Capture cover pair
+      player.capturedPile.push(playedCard, ...group.topCards);
+      group.topCards = null;
     } else {
-      s = skipCover(s);
+      // Capture group
+      group.cards.push(playedCard);
+      group.ownerId = player.id;
+
+      // Optionally cover most valuable own group with a low-value pair
+      if (canPlaceCover(player.hand)) {
+        const myGroups = s.field.filter((g) => g.ownerId === player.id && !g.topCards);
+        const target = myGroups
+          .filter((g) => groupValue(g) >= 20)
+          .sort((a, b) => groupValue(b) - groupValue(a))[0];
+
+        if (target) {
+          // Find two same-type cards with lowest point value
+          const typeBuckets: Record<string, Card[]> = {};
+          for (const c of player.hand) {
+            if (!typeBuckets[c.type]) typeBuckets[c.type] = [];
+            typeBuckets[c.type].push(c);
+          }
+          const pair = Object.values(typeBuckets)
+            .filter((arr) => arr.length >= 2)
+            .sort((a, b) => (CARD_POINTS[a[0].type] ?? 0) - (CARD_POINTS[b[0].type] ?? 0))[0];
+
+          if (pair) {
+            const [c1, c2] = pair;
+            player.hand.splice(player.hand.findIndex((c) => c.id === c1.id), 1);
+            player.hand.splice(player.hand.findIndex((c) => c.id === c2.id), 1);
+            target.topCards = [c1, c2];
+          }
+        }
+      }
     }
   } else {
-    // No valid capture — throw lowest-value card
-    const throwCard = findThrowCard(player.hand);
-    s = executeThrow(s, throwCard.id);
+    // Can't capture — throw lowest-value non-joker card
+    const throwCard = player.hand
+      .filter((c) => c.type !== 'joker')
+      .sort((a, b) => (CARD_POINTS[a.type] ?? 0) - (CARD_POINTS[b.type] ?? 0))[0]
+      ?? player.hand[0];
+
+    const throwIdx = player.hand.findIndex((c) => c.id === throwCard.id);
+    player.hand.splice(throwIdx, 1);
+    s.field.push({
+      id: `g_ai_${Date.now()}`,
+      baseType: throwCard.type,
+      cards: [throwCard],
+      ownerId: null,
+      topCards: null,
+    });
   }
 
+  s.canCoverAfterAction = false;
+  s.selectedCardId = null;
+  s.pendingCoverCardId = null;
   return s;
 }

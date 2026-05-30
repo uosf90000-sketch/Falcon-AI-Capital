@@ -34,7 +34,8 @@ export interface FieldGroup {
   baseType: CardType;   // determines what can capture it when uncovered
   cards: Card[];        // all accumulated cards (for scoring)
   ownerId: string | null;
-  topCard: Card | null; // covering card placed over the group
+  // Cover is always a PAIR of two same-type cards placed on top
+  topCards: [Card, Card] | null;
 }
 
 export interface Player {
@@ -55,11 +56,12 @@ export type GamePhase =
 
 // Phases within a single player's turn
 export type TurnPhase =
-  | 'select_card'         // player picks a card from hand
-  | 'select_target'       // player picks a field group to act on
-  | 'post_action'         // action done; player may choose to cover
-  | 'select_cover_card'   // player picks a card to use as cover
-  | 'select_cover_target';// player picks which of their groups to cover
+  | 'select_card'           // choose a card from hand
+  | 'select_target'         // choose where to play the card
+  | 'post_action'           // action done; player may choose to cover
+  | 'select_cover_card_1'   // choose FIRST card of the cover pair
+  | 'select_cover_card_2'   // choose SECOND card (must match first)
+  | 'select_cover_target';  // choose which own group to cover
 
 export interface GameState {
   phase: GamePhase;
@@ -68,10 +70,11 @@ export interface GameState {
   drawPile: Card[];
   currentPlayerIndex: number;
   selectedCardId: string | null;
+  pendingCoverCardId: string | null; // first cover card (waiting for second)
   turnPhase: TurnPhase;
-  lastCapturedGroupId: string | null; // group captured this turn (can be covered)
+  lastCapturedGroupId: string | null;
   message: string;
-  canCoverAfterAction: boolean;       // whether covering is allowed this turn
+  canCoverAfterAction: boolean;
 }
 
 export interface ScoreEntry {

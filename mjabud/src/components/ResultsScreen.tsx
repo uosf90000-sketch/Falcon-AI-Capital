@@ -101,7 +101,7 @@ export function ResultsScreen({ state, onRestart }: Props) {
           {state.field.map((g) => {
             const owner = state.players.find(p => p.id === g.ownerId);
             const pts = g.cards.reduce((s, c) => s + (CARD_POINTS[c.type] ?? 0), 0)
-              + (g.topCard ? (CARD_POINTS[g.topCard.type] ?? 0) : 0);
+              + (g.topCards ? g.topCards.reduce((s, c) => s + (CARD_POINTS[c.type] ?? 0), 0) : 0);
             return (
               <div
                 key={g.id}
@@ -117,9 +117,9 @@ export function ResultsScreen({ state, onRestart }: Props) {
                 </div>
                 <div>{owner ? owner.name : 'بلا مالك'}</div>
                 <div style={{ color: 'var(--gold)' }}>{pts} نقطة</div>
-                {g.topCard && (
+                {g.topCards && (
                   <div style={{ color: '#8e44ad', fontSize: '0.7rem' }}>
-                    غطاء: {CARD_LABELS[g.topCard.type]}
+                    غطاء: {CARD_LABELS[g.topCards[0].type]} + {CARD_LABELS[g.topCards[1].type]}
                   </div>
                 )}
               </div>

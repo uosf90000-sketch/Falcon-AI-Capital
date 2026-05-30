@@ -35,7 +35,7 @@ export function initGame(playerNames: string[], aiFlags: boolean[] = []): GameSt
     baseType: type as CardType,
     cards: [deck[idx++]],
     ownerId: null,
-    topCard: null,
+    topCards: null,
   }));
 
   return {
@@ -45,28 +45,24 @@ export function initGame(playerNames: string[], aiFlags: boolean[] = []): GameSt
     drawPile: deck.slice(idx),
     currentPlayerIndex: 0,
     selectedCardId: null,
+    pendingCoverCardId: null,
     turnPhase: 'select_card',
     lastCapturedGroupId: null,
-    message: buildStartMessage(playerNames[0]),
+    message: `دور اللاعب: ${playerNames[0]}`,
     canCoverAfterAction: false,
   };
-}
-
-function buildStartMessage(name: string): string {
-  return `دور اللاعب: ${name}`;
 }
 
 // ─── Capture logic ─────────────────────────────────────────────────────────
 
 /**
  * Can `card` be played on `group`?
- * - If group has a topCard → must match topCard type (or be Joker).
- * - Otherwise → must match group baseType (or be Joker).
+ * - If group has a cover pair → card must match topCards[0].type (or be Joker).
+ * - Otherwise → card must match group baseType (or be Joker).
  */
 export function canCapture(card: Card, group: FieldGroup): boolean {
   if (card.type === 'joker') return true;
-  const target = group.topCard ?? null;
-  if (target) return card.type === target.type;
+  if (group.topCards) return card.type === group.topCards[0].type;
   return card.type === group.baseType;
 }
 
@@ -76,6 +72,16 @@ export function validTargets(card: Card, field: FieldGroup[]): string[] {
 
 export function playerCanPlay(hand: Card[], field: FieldGroup[]): boolean {
   return hand.some((c) => field.some((g) => canCapture(c, g)));
+}
+
+// Returns true if player has at least 2 cards of the same type (for cover)
+export function canPlaceCover(hand: Card[]): boolean {
+  const counts: Partial<Record<string, number>> = {};
+  for (const c of hand) {
+    counts[c.type] = (counts[c.type] ?? 0) + 1;
+    if (counts[c.type]! >= 2) return true;
+  }
+  return false;
 }
 
 // ─── Turn actions ──────────────────────────────────────────────────────────
@@ -92,11 +98,8 @@ export function selectCard(state: GameState, cardId: string): GameState {
   const targets = validTargets(card, s.field);
 
   if (targets.length === 0 && !playerCanPlay(player.hand, s.field)) {
-    // No valid targets with any card → must throw
-    s.turnPhase = 'select_target' as TurnPhase;
     s.message = 'لا يمكنك أخذ أي مجموعة. ستُرمى هذه الورقة في الميدان.';
   } else if (targets.length === 0) {
-    // Selected card has no targets, but other cards might
     s.selectedCardId = null;
     s.turnPhase = 'select_card' as TurnPhase;
     s.message = 'هذه الورقة لا تستطيع أخذ أي مجموعة. اختر ورقة أخرى.';
@@ -115,20 +118,23 @@ export function executeCapture(state: GameState, groupId: string): GameState {
   const playedCard: Card = player.hand.splice(cardIdx, 1)[0];
   const group = s.field.find((g: FieldGroup) => g.id === groupId)!;
 
-  if (group.topCard) {
-    // Capturing the cover card — both go to capturedPile
-    player.capturedPile.push(playedCard, group.topCard);
-    group.topCard = null;
+  if (group.topCards) {
+    // Capturing the cover pair — played card + both cover cards → capturedPile
+    player.capturedPile.push(playedCard, ...group.topCards);
+    group.topCards = null;
     s.lastCapturedGroupId = null;
     s.canCoverAfterAction = false;
-    s.message = 'أخذت الورقة العليا! المجموعة أصبحت مكشوفة.';
+    s.message = 'أخذت الغطاء! المجموعة أصبحت مكشوفة.';
   } else {
-    // Capturing the group itself
+    // Capturing the group itself — played card added, player takes ownership
     group.cards.push(playedCard);
     group.ownerId = player.id;
     s.lastCapturedGroupId = groupId;
-    s.canCoverAfterAction = true;
-    s.message = `استوليت على مجموعة! هل تريد تغطية إحدى مجموعاتك؟`;
+    // Cover allowed only if player has ≥2 cards of same type remaining
+    s.canCoverAfterAction = canPlaceCover(player.hand);
+    s.message = s.canCoverAfterAction
+      ? 'استوليت على المجموعة! هل تريد تغطيتها بورقتين؟'
+      : 'استوليت على المجموعة!';
   }
 
   s.selectedCardId = null;
@@ -147,10 +153,11 @@ export function executeThrow(state: GameState, cardId: string): GameState {
     baseType: thrown.type,
     cards: [thrown],
     ownerId: null,
-    topCard: null,
+    topCards: null,
   });
 
   s.selectedCardId = null;
+  s.pendingCoverCardId = null;
   s.turnPhase = 'post_action' as TurnPhase;
   s.canCoverAfterAction = false;
   s.lastCapturedGroupId = null;
@@ -158,14 +165,27 @@ export function executeThrow(state: GameState, cardId: string): GameState {
   return s;
 }
 
+// Cover step 1: start the cover flow
 export function startCover(state: GameState): GameState {
   const s = clone(state);
-  s.turnPhase = 'select_cover_card' as TurnPhase;
-  s.message = 'اختر ورقة من يدك لتغطية إحدى مجموعاتك.';
+  s.turnPhase = 'select_cover_card_1' as TurnPhase;
+  s.pendingCoverCardId = null;
+  s.message = 'اختر الورقة الأولى للغطاء.';
   return s;
 }
 
-export function selectCoverCard(state: GameState, cardId: string): GameState {
+// Cover step 2: player picked first card, now pick a matching second card
+export function selectCoverCard1(state: GameState, cardId: string): GameState {
+  const s = clone(state);
+  s.pendingCoverCardId = cardId;
+  s.turnPhase = 'select_cover_card_2' as TurnPhase;
+  const card = s.players[s.currentPlayerIndex].hand.find((c: Card) => c.id === cardId)!;
+  s.message = `اخترت ${card.type === 'joker' ? 'جوكر' : card.type}. الآن اختر ورقة ثانية من نفس النوع.`;
+  return s;
+}
+
+// Cover step 3: player picked second card (must match first), now pick target group
+export function selectCoverCard2(state: GameState, cardId: string): GameState {
   const s = clone(state);
   s.selectedCardId = cardId;
   s.turnPhase = 'select_cover_target' as TurnPhase;
@@ -173,25 +193,37 @@ export function selectCoverCard(state: GameState, cardId: string): GameState {
   return s;
 }
 
-export function executeCover(state: GameState, groupId: string): GameState {
+// Cover step 4: apply the cover pair on the chosen group
+export function executeCoverPair(state: GameState, groupId: string): GameState {
   const s = clone(state);
   const player = s.players[s.currentPlayerIndex];
-  const cardId = s.selectedCardId!;
-  const cardIdx = player.hand.findIndex((c: Card) => c.id === cardId);
-  const coverCard: Card = player.hand.splice(cardIdx, 1)[0];
-  const group = s.field.find((g: FieldGroup) => g.id === groupId)!;
 
-  group.topCard = coverCard;
+  const card1Id = s.pendingCoverCardId!;
+  const card2Id = s.selectedCardId!;
+
+  const idx1 = player.hand.findIndex((c: Card) => c.id === card1Id);
+  const card1: Card = player.hand.splice(idx1, 1)[0];
+
+  // After splicing card1, re-find card2 index
+  const idx2 = player.hand.findIndex((c: Card) => c.id === card2Id);
+  const card2: Card = player.hand.splice(idx2, 1)[0];
+
+  const group = s.field.find((g: FieldGroup) => g.id === groupId)!;
+  group.topCards = [card1, card2];
+
   s.selectedCardId = null;
+  s.pendingCoverCardId = null;
   s.turnPhase = 'post_action' as TurnPhase;
   s.canCoverAfterAction = false;
-  s.message = 'غطيت المجموعة! انتهى دورك.';
+  s.message = 'وضعت الغطاء! المجموعة محمية.';
   return s;
 }
 
 export function skipCover(state: GameState): GameState {
   const s = clone(state);
   s.canCoverAfterAction = false;
+  s.pendingCoverCardId = null;
+  s.selectedCardId = null;
   s.turnPhase = 'post_action' as TurnPhase;
   s.message = 'انتهى دورك.';
   return s;
@@ -200,7 +232,7 @@ export function skipCover(state: GameState): GameState {
 // ─── End of turn ──────────────────────────────────────────────────────────
 
 export function endTurn(state: GameState): GameState {
-  let s = clone(state);
+  const s = clone(state);
   const player = s.players[s.currentPlayerIndex];
 
   // Draw cards until DRAW_TO (if draw pile available)
@@ -211,6 +243,7 @@ export function endTurn(state: GameState): GameState {
   s.lastCapturedGroupId = null;
   s.canCoverAfterAction = false;
   s.selectedCardId = null;
+  s.pendingCoverCardId = null;
 
   if (isGameOver(s)) {
     s.phase = 'ended';
@@ -218,7 +251,7 @@ export function endTurn(state: GameState): GameState {
     return s;
   }
 
-  // Advance to the next player who still has cards; skip empty hands.
+  // Advance to next player with cards; skip empty hands
   const n = s.players.length;
   let next = (s.currentPlayerIndex + 1) % n;
   let checked = 0;
@@ -227,7 +260,6 @@ export function endTurn(state: GameState): GameState {
     checked++;
   }
 
-  // If every remaining player has an empty hand the game is over
   if (s.players[next].hand.length === 0) {
     s.phase = 'ended';
     s.message = 'انتهت اللعبة!';
@@ -247,10 +279,9 @@ export function resumeTurn(state: GameState): GameState {
   const player = s.players[s.currentPlayerIndex];
 
   if (player.hand.length === 0) {
-    // Should not normally happen (endTurn skips empty-hand players), but guard anyway
     s.message = 'يدك فارغة — الدور ينتقل تلقائياً.';
   } else if (!playerCanPlay(player.hand, s.field)) {
-    s.message = `لا يمكنك أخذ أي مجموعة. يجب عليك رمي ورقة.`;
+    s.message = 'لا يمكنك أخذ أي مجموعة. يجب عليك رمي ورقة.';
     s.turnPhase = 'select_card' as TurnPhase;
   } else {
     s.message = `دور اللاعب: ${player.name}`;
@@ -279,8 +310,8 @@ export function computeScores(state: GameState): ScoreEntry[] {
     const groupCards: Card[] = [];
     for (const g of ownedGroups) {
       groupCards.push(...g.cards);
-      // topCard still on the group at game end also counts for group owner
-      if (g.topCard) groupCards.push(g.topCard);
+      // topCards still on the group at game end count for the group owner
+      if (g.topCards) groupCards.push(...g.topCards);
     }
 
     const allCards = [...groupCards, ...player.capturedPile];
@@ -289,12 +320,6 @@ export function computeScores(state: GameState): ScoreEntry[] {
       0
     );
 
-    return {
-      player,
-      ownedGroups,
-      groupCards,
-      capturedCards: player.capturedPile,
-      score,
-    };
+    return { player, ownedGroups, groupCards, capturedCards: player.capturedPile, score };
   });
 }
