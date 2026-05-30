@@ -1,0 +1,141 @@
+{
+  "name": "Musaffa — فلتر الأسهم الحلال (Webhook)",
+  "nodes": [
+    {
+      "id": "node-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "screen-stocks",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "webhookId": "falcon-musaffa-screener"
+    },
+    {
+      "id": "node-split",
+      "name": "تقسيم الأسهم",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const body = $input.first().json.body ?? $input.first().json;\nconst tickers = (body.tickers ?? [])\n  .map(t => t.toString().toUpperCase().trim())\n  .filter(Boolean);\n\nif (tickers.length === 0) throw new Error('أرسل قائمة tickers في الـ body');\nif (tickers.length > 50) throw new Error('الحد الأقصى 50 سهم في طلب واحد');\n\nreturn tickers.map(ticker => ({ json: { ticker } }));"
+      }
+    },
+    {
+      "id": "node-musaffa",
+      "name": "Musaffa API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [680, 300],
+      "continueOnFail": true,
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.musaffa.com/v1/instruments/' + $json.ticker }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apiKey",
+              "value": "={{ $env.MUSAFFA_API_KEY }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000,
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "node-evaluate",
+      "name": "تقييم الحالة الشرعية",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const ticker = $('تقسيم الأسهم').item.json.ticker;\nconst data = $json;\n\n// في حالة فشل الـ API\nif (data.error || data.message) {\n  return {\n    json: {\n      ticker,\n      halal: false,\n      status: 'ERROR',\n      purification_rate: null,\n      sector: '',\n      reason: 'فشل الاتصال بـ Musaffa — مرفوض احتياطاً'\n    }\n  };\n}\n\nconst status = data.shariaComplianceStatus ?? 'UNKNOWN';\nconst purification = parseFloat(data.purificationPercentage ?? 0);\n\n// الشرط: COMPLIANT + تطهير = 0% بالضبط\nconst isHalal = status === 'COMPLIANT' && purification === 0;\n\nconst reason = isHalal ? '' :\n  status !== 'COMPLIANT'\n    ? `الحالة: ${status}`\n    : `نسبة تطهير ${purification}% — يجب أن تكون 0%`;\n\nreturn {\n  json: {\n    ticker,\n    halal: isHalal,\n    purification_rate: purification,\n    status,\n    sector: data.businessSector ?? '',\n    reason\n  }\n};"
+      }
+    },
+    {
+      "id": "node-build-response",
+      "name": "بناء الرد النهائي",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const all = $input.all().map(i => i.json);\n\nconst halal = all.filter(r => r.halal).map(r => r.ticker);\nconst rejected = {};\nall.filter(r => !r.halal).forEach(r => {\n  rejected[r.ticker] = r.reason;\n});\n\nreturn [{\n  json: {\n    halal,\n    rejected,\n    total: all.length,\n    halal_count: halal.length,\n    details: all\n  }\n}];"
+      }
+    },
+    {
+      "id": "node-respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1340, 300],
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "values": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [{ "node": "تقسيم الأسهم", "type": "main", "index": 0 }]
+      ]
+    },
+    "تقسيم الأسهم": {
+      "main": [
+        [{ "node": "Musaffa API", "type": "main", "index": 0 }]
+      ]
+    },
+    "Musaffa API": {
+      "main": [
+        [{ "node": "تقييم الحالة الشرعية", "type": "main", "index": 0 }]
+      ]
+    },
+    "تقييم الحالة الشرعية": {
+      "main": [
+        [{ "node": "بناء الرد النهائي", "type": "main", "index": 0 }]
+      ]
+    },
+    "بناء الرد النهائي": {
+      "main": [
+        [{ "node": "Respond to Webhook", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "tags": ["halal", "musaffa", "stocks"],
+  "triggerCount": 1,
+  "versionId": "1"
+}
