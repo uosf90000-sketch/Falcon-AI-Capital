@@ -1,84 +1,48 @@
 """
-Musaffa Client — 4 طرق بالترتيب:
-  1. كوكيز محفوظة من المتصفح (MUSAFFA_COOKIES) ← الأفضل عند وجود OTP
-  2. تسجيل دخول Musaffa (email + password) بدون OTP
-  3. Zoya Finance API (بديل مجاني)
-  4. قوائم محلية مُدقّقة (احتياطي دائم)
+Musaffa Client — بيانات حقيقية من musaffa.com
+يسجّل دخول تلقائياً بإيميلك وكلمة السر من Railway env vars
 """
 
-import os
-import re
-import json
-import logging
-import time
+import os, re, json, logging, time
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional
-
 import requests
 
 logger = logging.getLogger(__name__)
 
-CACHE_DIR = Path("cache/musaffa")
-CACHE_TTL  = timedelta(hours=24)
+CACHE_DIR    = Path("cache/musaffa")
+SESSION_FILE = Path("cache/musaffa_session.json")
+CACHE_TTL    = timedelta(hours=24)
+SESSION_TTL  = timedelta(days=25)
 
-# ── قوائم محلية احتياطية ─────────────────────────────────────────────────────
-_HARAM = {
-    "JPM","BAC","WFC","C","GS","MS","AXP","COF","DFS",          # بنوك
-    "MET","PRU","AIG","AFL","ALL","CB","TRV","PGR",              # تأمين
-    "PM","MO","BTI","STZ","BUD","TAP",                           # كحول/تبغ
-    "MGM","WYNN","LVS","CZR","DKNG",                             # قمار
-    "LMT","RTX","NOC","GD","BA",                                 # أسلحة
-}
-_HAS_PURIF = {
-    "AAPL","NVDA","MSFT","GOOGL","GOOG","AMZN","META","TSLA",
-    "AMGN","GILD",
-}
-_HALAL_ZERO = {
-    "PANW","CRWD","FTNT","ZS","OKTA",
-    "ANSS","SNPS","CDNS","PTC",
-    "EPAM","GLOB",
-    "IDXX","HOLX","PODD","INSP",
-    "ROK","NOVT","ESAB",
-    "NEE","BEP","CWEN",
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept":          "application/json, text/html, */*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer":         "https://musaffa.com/",
+    "Origin":          "https://musaffa.com",
 }
 
 
 class MusaffaClient:
 
-    HEADERS = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        ),
-        "Accept": "application/json, text/html, */*",
-        "Accept-Language": "en-US,en;q=0.9",
-    }
-
-    COOKIES_FILE = Path("cache/musaffa_session.json")
-
-    def __init__(
-        self,
-        api_key:  str = "",
-        email:    str = "",
-        password: str = "",
-        zoya_key: str = "",
-    ):
-        self.api_key   = api_key   or os.getenv("MUSAFFA_API_KEY",  "")
-        self.email     = email     or os.getenv("MUSAFFA_EMAIL",    "")
-        self.password  = password  or os.getenv("MUSAFFA_PASSWORD", "")
-        self.zoya_key  = zoya_key  or os.getenv("ZOYA_API_KEY",     "")
-
-        # كوكيز يدوية من المتصفح (عند وجود OTP)
+    def __init__(self, email="", password="", api_key=""):
+        self.email    = email    or os.getenv("MUSAFFA_EMAIL",    "")
+        self.password = password or os.getenv("MUSAFFA_PASSWORD", "")
+        self.api_key  = api_key  or os.getenv("MUSAFFA_API_KEY",  "")
         self._cookies_env = os.getenv("MUSAFFA_COOKIES", "")
 
-        self._session   = requests.Session()
-        self._session.headers.update(self.HEADERS)
+        self._s = requests.Session()
+        self._s.headers.update(HEADERS)
         self._logged_in = False
 
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        self.COOKIES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
 
     # ── نقطة الدخول ──────────────────────────────────────────────────────────
 
@@ -89,132 +53,119 @@ class MusaffaClient:
         if cached:
             return cached
 
-        # 1. Musaffa API رسمي
-        if self.api_key:
-            r = self._musaffa_api(ticker)
-            if r:
-                return self._cache_and_return(ticker, r)
+        result = self._get_from_musaffa(ticker)
+        if result:
+            self._save_cache(ticker, result)
+            return result
 
-        # 2. كوكيز من المتصفح (حل OTP)
-        if not self._logged_in:
-            self._load_session()
-
-        if self._logged_in:
-            r = self._musaffa_scrape(ticker)
-            if r:
-                return self._cache_and_return(ticker, r)
-
-        # 3. login تقليدي (بدون OTP)
-        if self.email and self.password and not self._logged_in:
-            self._musaffa_login()
-            if self._logged_in:
-                r = self._musaffa_scrape(ticker)
-                if r:
-                    return self._cache_and_return(ticker, r)
-
-        # 4. Zoya Finance
-        if self.zoya_key:
-            r = self._zoya(ticker)
-            if r:
-                return self._cache_and_return(ticker, r)
-
-        # 5. ETF universe (SPUS/HLAL) + قوائم محلية
-        return self._cache_and_return(ticker, self._local_lists(ticker))
+        # احتياطي: قوائم محلية
+        return self._save_cache(ticker, self._fallback(ticker))
 
     def screen_list(self, tickers: list[str]) -> dict:
         halal, rejected = [], {}
         for t in tickers:
             r = self.is_halal_zero(t)
-            if r["halal"]:
-                halal.append(t)
-            else:
+            (halal if r["halal"] else rejected.update({t: r["reason"]} or [])) and halal.append(t) if r["halal"] else None
+            if not r["halal"]:
                 rejected[t] = r["reason"]
             time.sleep(0.5)
         return {"halal": halal, "rejected": rejected,
                 "total": len(tickers), "halal_count": len(halal)}
 
-    # ── 1. Musaffa API رسمي ───────────────────────────────────────────────────
+    # ── منطق الحصول على البيانات ─────────────────────────────────────────────
 
-    def _musaffa_api(self, ticker: str) -> Optional[dict]:
-        try:
-            r = self._session.get(
-                f"https://api.musaffa.com/v1/instruments/{ticker}",
-                headers={"apiKey": self.api_key}, timeout=10,
-            )
-            if r.status_code in (401, 403, 404):
-                return None
-            r.raise_for_status()
-            return self._parse(ticker, r.json())
-        except Exception as e:
-            logger.warning(f"Musaffa API error {ticker}: {e}")
+    def _get_from_musaffa(self, ticker: str) -> Optional[dict]:
+        # 1. API رسمي (إذا عنده مفتاح)
+        if self.api_key:
+            r = self._official_api(ticker)
+            if r:
+                return r
+
+        # 2. تأكد من الجلسة النشطة
+        if not self._logged_in:
+            self._start_session()
+
+        if not self._logged_in:
+            logger.warning("Musaffa: لم يتم تسجيل الدخول — تحقق من MUSAFFA_EMAIL و MUSAFFA_PASSWORD")
             return None
 
-    # ── 2. كوكيز المتصفح (حل OTP) ────────────────────────────────────────────
+        # 3. جرب API الداخلي أولاً (أسرع وأدق)
+        r = self._internal_api(ticker)
+        if r:
+            return r
 
-    def _load_session(self):
-        """
-        يحمّل الكوكيز من مصدرين:
-          أ) MUSAFFA_COOKIES في env (Railway) — JSON string
-          ب) ملف cache/musaffa_session.json — محفوظ من setup_musaffa.py
-        """
-        # أ) من env مباشرة
-        if self._cookies_env:
-            try:
-                cookies = json.loads(self._cookies_env)
-                if isinstance(cookies, list):
-                    # صيغة Cookie-Editor (قائمة objects)
-                    for c in cookies:
-                        self._session.cookies.set(c["name"], c["value"])
-                elif isinstance(cookies, dict):
-                    # صيغة بسيطة {name: value}
-                    for name, value in cookies.items():
-                        self._session.cookies.set(name, value)
-                self._logged_in = True
-                logger.info("Musaffa: كوكيز من env محمّلة ✅")
-                return
-            except Exception as e:
-                logger.warning(f"MUSAFFA_COOKIES parse error: {e}")
+        # 4. اقرأ صفحة السهم
+        return self._scrape_page(ticker)
 
-        # ب) من ملف محفوظ
-        if not self.COOKIES_FILE.exists():
+    # ── تسجيل الدخول ─────────────────────────────────────────────────────────
+
+    def _start_session(self):
+        """يحاول تسجيل الدخول بكل الطرق المتاحة"""
+
+        # أ) كوكيز محفوظة من env
+        if self._load_cookies_env():
             return
+
+        # ب) كوكيز من ملف (محفوظة سابقاً)
+        if self._load_cookies_file():
+            return
+
+        # ج) تسجيل دخول بإيميل + كلمة سر
+        if self.email and self.password:
+            self._login_with_credentials()
+
+    def _load_cookies_env(self) -> bool:
+        if not self._cookies_env:
+            return False
         try:
-            data     = json.loads(self.COOKIES_FILE.read_text())
-            saved_at = datetime.fromisoformat(data.get("_saved_at", "2000-01-01"))
-            if datetime.now() - saved_at > timedelta(days=30):
-                logger.info("Musaffa: الكوكيز انتهت صلاحيتها — سجّل دخول من جديد")
-                return
-            for name, value in data.get("cookies", {}).items():
-                self._session.cookies.set(name, value)
-            self._logged_in = True
-            logger.info("Musaffa: كوكيز من الملف محمّلة ✅")
+            cookies = json.loads(self._cookies_env)
+            if isinstance(cookies, list):
+                for c in cookies:
+                    self._s.cookies.set(c["name"], c["value"])
+            else:
+                for k, v in cookies.items():
+                    self._s.cookies.set(k, v)
+            self._logged_in = self._verify_session()
+            if self._logged_in:
+                logger.info("Musaffa: دخول بكوكيز env ✅")
+            return self._logged_in
         except Exception as e:
-            logger.warning(f"Session file load error: {e}")
+            logger.warning(f"MUSAFFA_COOKIES error: {e}")
+            return False
 
-    def save_session(self):
-        """احفظ الكوكيز الحالية — استخدمه بعد تسجيل الدخول اليدوي"""
-        cookies = {k: v for k, v in self._session.cookies.items()}
-        self.COOKIES_FILE.write_text(json.dumps({
-            "_saved_at": datetime.now().isoformat(),
-            "cookies": cookies,
-        }, ensure_ascii=False, indent=2))
-        logger.info(f"Session saved → {self.COOKIES_FILE}")
-
-    # ── 3. Musaffa Login تقليدي ───────────────────────────────────────────────
-
-    def _musaffa_login(self):
-        """
-        يسجّل دخول Musaffa بـ email/password.
-        يحتاج: MUSAFFA_EMAIL و MUSAFFA_PASSWORD في .env
-        """
+    def _load_cookies_file(self) -> bool:
+        if not SESSION_FILE.exists():
+            return False
         try:
-            # أ) جيب CSRF token (NextAuth)
-            csrf = self._session.get(
-                "https://musaffa.com/api/auth/csrf", timeout=10
-            ).json().get("csrfToken", "")
+            data = json.loads(SESSION_FILE.read_text())
+            saved = datetime.fromisoformat(data.get("_saved_at", "2000-01-01"))
+            if datetime.now() - saved > SESSION_TTL:
+                logger.info("Musaffa: الجلسة المحفوظة انتهت")
+                return False
+            for k, v in data.get("cookies", {}).items():
+                self._s.cookies.set(k, v)
+            self._logged_in = self._verify_session()
+            if self._logged_in:
+                logger.info("Musaffa: دخول بجلسة محفوظة ✅")
+            return self._logged_in
+        except Exception:
+            return False
 
-            # ب) سجّل دخول
-            resp = self._session.post(
+    def _login_with_credentials(self):
+        """تسجيل دخول بإيميل + كلمة سر"""
+        try:
+            logger.info(f"Musaffa: محاولة دخول بـ {self.email}...")
+
+            # خطوة 1: جيب CSRF token
+            csrf = ""
+            try:
+                r = self._s.get("https://musaffa.com/api/auth/csrf", timeout=10)
+                csrf = r.json().get("csrfToken", "")
+            except Exception:
+                pass
+
+            # خطوة 2: سجّل دخول (NextAuth)
+            resp = self._s.post(
                 "https://musaffa.com/api/auth/callback/credentials",
                 data={
                     "email":       self.email,
@@ -227,124 +178,106 @@ class MusaffaClient:
                 allow_redirects=True,
             )
 
-            # تحقق من نجاح الدخول
-            if resp.ok and "session" in self._session.cookies.get_dict():
-                self._logged_in = True
+            self._logged_in = self._verify_session()
+
+            if self._logged_in:
                 logger.info("Musaffa: تسجيل الدخول نجح ✅")
+                self._save_cookies_file()
             else:
-                # جرّب endpoint بديل
-                resp2 = self._session.post(
-                    "https://musaffa.com/api/user/login",
-                    json={"email": self.email, "password": self.password},
-                    timeout=15,
+                logger.warning(
+                    "Musaffa: فشل تسجيل الدخول ❌\n"
+                    "السبب المحتمل:\n"
+                    "  • كلمة السر خاطئة\n"
+                    "  • الحساب يستخدم Google login\n"
+                    "  • طلب OTP — استخدم setup_musaffa.py"
                 )
-                self._logged_in = resp2.ok
-                if self._logged_in:
-                    logger.info("Musaffa: دخول عبر /api/user/login ✅")
-                else:
-                    logger.warning("Musaffa: فشل تسجيل الدخول")
 
         except Exception as e:
-            logger.error(f"Musaffa login exception: {e}")
-            self._logged_in = False
+            logger.error(f"Musaffa login error: {e}")
 
-    def _musaffa_scrape(self, ticker: str) -> Optional[dict]:
-        """يسحب بيانات السهم بعد تسجيل الدخول"""
-        # جرّب API داخلي أولاً
-        for endpoint in [
+    def _verify_session(self) -> bool:
+        """يتحقق أن الجلسة فعّالة"""
+        try:
+            r = self._s.get("https://musaffa.com/api/auth/session", timeout=8)
+            data = r.json()
+            return bool(data.get("user") or data.get("email"))
+        except Exception:
+            return False
+
+    def _save_cookies_file(self):
+        """يحفظ الكوكيز للاستخدام اللاحق"""
+        try:
+            SESSION_FILE.write_text(json.dumps({
+                "_saved_at": datetime.now().isoformat(),
+                "cookies": dict(self._s.cookies),
+            }, ensure_ascii=False, indent=2))
+        except Exception:
+            pass
+
+    # ── جلب البيانات ─────────────────────────────────────────────────────────
+
+    def _official_api(self, ticker: str) -> Optional[dict]:
+        try:
+            r = self._s.get(
+                f"https://api.musaffa.com/v1/instruments/{ticker}",
+                headers={"apiKey": self.api_key}, timeout=10,
+            )
+            if r.ok:
+                return self._parse(ticker, r.json())
+        except Exception:
+            pass
+        return None
+
+    def _internal_api(self, ticker: str) -> Optional[dict]:
+        """يجرب API الداخلي الذي يستخدمه الموقع بعد الدخول"""
+        endpoints = [
             f"https://musaffa.com/api/stocks/{ticker}/compliance",
             f"https://musaffa.com/api/v1/instruments/{ticker}",
             f"https://musaffa.com/api/screener/stocks/{ticker}",
-        ]:
+            f"https://musaffa.com/api/stock/{ticker}",
+        ]
+        for url in endpoints:
             try:
-                r = self._session.get(endpoint, timeout=10)
-                if r.ok and r.headers.get("content-type", "").startswith("application/json"):
+                r = self._s.get(url, timeout=10)
+                if r.ok and "json" in r.headers.get("content-type", ""):
                     result = self._parse(ticker, r.json())
                     if result:
+                        logger.info(f"Musaffa internal API: {ticker} ✅")
                         return result
             except Exception:
                 continue
+        return None
 
-        # ثم اقرأ صفحة السهم HTML
+    def _scrape_page(self, ticker: str) -> Optional[dict]:
+        """يقرأ صفحة السهم ويستخرج البيانات من __NEXT_DATA__"""
         try:
-            r = self._session.get(
-                f"https://musaffa.com/stock/{ticker}", timeout=15
-            )
+            r = self._s.get(f"https://musaffa.com/stock/{ticker}", timeout=15)
             if not r.ok:
                 return None
-            return self._parse_nextjs(ticker, r.text)
+            m = re.search(
+                r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',
+                r.text, re.DOTALL
+            )
+            if not m:
+                return None
+            data = json.loads(m.group(1))
+            props = data.get("props", {}).get("pageProps", {})
+            return self._deep_search(ticker, props)
         except Exception as e:
             logger.warning(f"Musaffa scrape error {ticker}: {e}")
             return None
 
-    # ── 3. Zoya Finance ───────────────────────────────────────────────────────
-
-    def _zoya(self, ticker: str) -> Optional[dict]:
-        query = """
-        query($t: String!) {
-          stockReport(ticker: $t) {
-            ticker complianceStatus purificationRatio businessSector
-          }
-        }"""
-        try:
-            r = self._session.post(
-                "https://api.zoya.finance/graphql",
-                json={"query": query, "variables": {"t": ticker}},
-                headers={"Authorization": f"Bearer {self.zoya_key}"},
-                timeout=10,
-            )
-            r.raise_for_status()
-            d = r.json().get("data", {}).get("stockReport") or {}
-            if not d:
-                return None
-            status = d.get("complianceStatus", "")
-            purif  = round(float(d.get("purificationRatio") or 0) * 100, 4)
-            halal  = status == "COMPLIANT" and purif == 0.0
-            return {
-                "ticker": ticker, "halal": halal,
-                "purification_rate": purif, "status": status,
-                "sector": d.get("businessSector", ""),
-                "reason": "" if halal else (
-                    f"Zoya: {status}" if status != "COMPLIANT"
-                    else f"تطهير {purif}%"
-                ),
-            }
-        except Exception as e:
-            logger.warning(f"Zoya error {ticker}: {e}")
-            return None
-
-    # ── 4. قوائم محلية + ETF universe ────────────────────────────────────────
-
-    def _local_lists(self, ticker: str) -> dict:
-        if ticker in _HARAM:
-            return self._make(ticker, False, 0, "NON_COMPLIANT", "سهم محظور")
-        if ticker in _HAS_PURIF:
-            return self._make(ticker, False, 0, "COMPLIANT", "حلال لكن فيه تطهير > 0%")
-        if ticker in _HALAL_ZERO:
-            return self._make(ticker, True, 0, "COMPLIANT", "")
-
-        # تحقق من ETFs (SPUS / HLAL) — يتحدث تلقائياً كل أسبوع
-        try:
-            from halal_universe import is_halal as etf_halal
-            if etf_halal(ticker):
-                return self._make(ticker, True, 0, "COMPLIANT", "")
-        except Exception:
-            pass
-
-        return self._make(ticker, False, None, "UNKNOWN",
-                          "غير موجود في قواعد البيانات — مرفوض احتياطاً")
-
-    # ── مساعدات ──────────────────────────────────────────────────────────────
+    # ── تحليل البيانات ────────────────────────────────────────────────────────
 
     def _parse(self, ticker: str, d: dict) -> Optional[dict]:
-        for sk in ("shariaComplianceStatus","complianceStatus","islamicStatus","status"):
-            status = d.get(sk)
-            if status:
+        status = None
+        for k in ("shariaComplianceStatus","complianceStatus","islamicStatus","status"):
+            if d.get(k):
+                status = str(d[k]).upper()
                 break
-        else:
+        if not status:
             return None
 
-        status = str(status).upper()
         if "NON" in status or "HARAM" in status:
             status = "NON_COMPLIANT"
         elif "COMPLIANT" in status or "HALAL" in status:
@@ -353,10 +286,9 @@ class MusaffaClient:
             status = "QUESTIONABLE"
 
         purif = 0.0
-        for pk in ("purificationPercentage","purificationRatio","purification"):
-            v = d.get(pk)
-            if v is not None:
-                purif = float(v)
+        for k in ("purificationPercentage","purificationRatio","purification"):
+            if d.get(k) is not None:
+                purif = float(d[k])
                 if 0 < purif < 1:
                     purif *= 100
                 break
@@ -366,24 +298,14 @@ class MusaffaClient:
             "ticker": ticker, "halal": halal,
             "purification_rate": round(purif, 4), "status": status,
             "sector": d.get("businessSector") or d.get("sector") or "",
+            "source": "musaffa",
             "reason": "" if halal else (
                 f"الحالة: {status}" if status != "COMPLIANT"
                 else f"تطهير {purif}%"
             ),
         }
 
-    def _parse_nextjs(self, ticker: str, html: str) -> Optional[dict]:
-        m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
-        if not m:
-            return None
-        try:
-            data  = json.loads(m.group(1))
-            props = data.get("props", {}).get("pageProps", {})
-            return self._deep_search(ticker, props)
-        except Exception:
-            return None
-
-    def _deep_search(self, ticker: str, obj, depth: int = 0) -> Optional[dict]:
+    def _deep_search(self, ticker: str, obj, depth=0) -> Optional[dict]:
         if depth > 6:
             return None
         if isinstance(obj, dict):
@@ -401,36 +323,57 @@ class MusaffaClient:
                     return r
         return None
 
-    @staticmethod
-    def _make(ticker, halal, purif, status, reason) -> dict:
-        return {"ticker": ticker, "halal": halal,
-                "purification_rate": purif, "status": status,
-                "sector": "", "reason": reason}
+    # ── احتياطي: قوائم محلية ─────────────────────────────────────────────────
 
-    def _cache_and_return(self, ticker: str, result: dict) -> dict:
-        self._save_cache(ticker, result)
-        return result
+    def _fallback(self, ticker: str) -> dict:
+        from halal_universe import is_halal as etf_halal
+        HARAM = {
+            "JPM","BAC","WFC","C","GS","MS","AXP","COF","DFS",
+            "MET","PRU","AIG","AFL","ALL","CB","TRV","PGR",
+            "PM","MO","BTI","STZ","BUD","TAP",
+            "MGM","WYNN","LVS","CZR","DKNG",
+            "LMT","RTX","NOC","GD","BA",
+        }
+        HAS_PURIF = {
+            "AAPL","NVDA","MSFT","GOOGL","GOOG",
+            "AMZN","META","TSLA","AMGN","GILD",
+        }
+        if ticker in HARAM:
+            return self._r(ticker, False, "NON_COMPLIANT", "سهم محظور")
+        if ticker in HAS_PURIF:
+            return self._r(ticker, False, "COMPLIANT",     "حلال لكن فيه تطهير > 0%")
+        try:
+            if etf_halal(ticker):
+                return self._r(ticker, True, "COMPLIANT", "")
+        except Exception:
+            pass
+        return self._r(ticker, False, "UNKNOWN", "غير موجود في Musaffa — مرفوض احتياطاً")
+
+    @staticmethod
+    def _r(ticker, halal, status, reason) -> dict:
+        return {"ticker": ticker, "halal": halal, "purification_rate": 0.0 if halal else None,
+                "status": status, "sector": "", "source": "local", "reason": reason}
 
     # ── Cache ─────────────────────────────────────────────────────────────────
 
     def _load_cache(self, ticker: str) -> Optional[dict]:
-        path = CACHE_DIR / f"{ticker}.json"
-        if not path.exists():
+        p = CACHE_DIR / f"{ticker}.json"
+        if not p.exists():
             return None
         try:
-            d = json.loads(path.read_text())
+            d = json.loads(p.read_text())
             if datetime.now() - datetime.fromisoformat(d["_at"]) > CACHE_TTL:
                 return None
             return d
         except Exception:
             return None
 
-    def _save_cache(self, ticker: str, result: dict):
+    def _save_cache(self, ticker: str, result: dict) -> dict:
         try:
-            path = CACHE_DIR / f"{ticker}.json"
-            path.write_text(json.dumps(
-                {**result, "_at": datetime.now().isoformat()},
-                ensure_ascii=False, indent=2
-            ))
+            (CACHE_DIR / f"{ticker}.json").write_text(
+                json.dumps({**result, "_at": datetime.now().isoformat()},
+                           ensure_ascii=False, indent=2)
+            )
         except Exception:
             pass
+        return result
