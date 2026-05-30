@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🦅 Falcon Sharia</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0f0f0f;color:#fff;min-height:100vh;padding:0}
+
+    /* ── تبويبات ── */
+    .tabs{display:flex;background:#111;border-bottom:1px solid #222;position:sticky;top:0;z-index:10}
+    .tab{flex:1;padding:14px;text-align:center;font-size:14px;font-weight:600;color:#666;cursor:pointer;border:none;background:none;transition:.2s}
+    .tab.active{color:#4ade80;border-bottom:2px solid #4ade80}
+
+    /* ── صفحة الفحص ── */
+    #page-check{padding:24px 16px;display:flex;flex-direction:column;align-items:center}
+    .logo{font-size:40px;margin-bottom:8px}
+    h1{font-size:20px;font-weight:800;margin-bottom:4px}
+    .sub{font-size:12px;color:#666;margin-bottom:28px}
+
+    .card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:20px;padding:24px;width:100%;max-width:420px}
+    input{width:100%;padding:16px;font-size:22px;font-weight:700;text-align:center;letter-spacing:3px;background:#111;border:2px solid #333;border-radius:14px;color:#fff;outline:none;margin-bottom:14px;text-transform:uppercase;transition:.2s}
+    input:focus{border-color:#4ade80}
+    input::placeholder{color:#444;letter-spacing:1px;font-weight:400;font-size:16px}
+    button.check-btn{width:100%;padding:15px;font-size:17px;font-weight:700;background:#4ade80;color:#000;border:none;border-radius:14px;cursor:pointer}
+    button.check-btn:active{opacity:.8}
+
+    .result{margin-top:20px;border-radius:16px;padding:20px;text-align:center;display:none}
+    .result.halal{background:#052e16;border:1px solid #16a34a}
+    .result.haram{background:#2d0a0a;border:1px solid #dc2626}
+    .r-icon{font-size:46px;margin-bottom:8px}
+    .r-ticker{font-size:26px;font-weight:800;letter-spacing:2px;margin-bottom:6px}
+    .r-decision{font-size:14px;font-weight:700;margin-bottom:6px}
+    .result.halal .r-decision{color:#4ade80}
+    .result.haram  .r-decision{color:#f87171}
+    .r-reason{font-size:13px;color:#aaa}
+    .r-purif{font-size:12px;color:#666;margin-top:6px}
+
+    /* ── تاريخ البحث ── */
+    .hist-section{margin-top:20px;width:100%;max-width:420px}
+    .hist-title{font-size:12px;color:#555;margin-bottom:8px}
+    .hist-item{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#1a1a1a;border:1px solid #222;border-radius:10px;margin-bottom:6px;cursor:pointer}
+    .hist-item:active{opacity:.7}
+    .hist-ticker{font-weight:700;font-size:15px}
+    .badge{font-size:11px;padding:3px 10px;border-radius:20px;font-weight:600}
+    .b-halal{background:#052e16;color:#4ade80}
+    .b-haram{background:#2d0a0a;color:#f87171}
+
+    /* ── صفحة القائمة ── */
+    #page-list{padding:16px;display:none}
+    .list-header{text-align:center;padding:16px 0 20px}
+    .list-header .lh-logo{font-size:32px}
+    .list-header h2{font-size:18px;font-weight:800;margin:6px 0 4px}
+    .list-header .lh-count{display:inline-block;background:#052e16;color:#4ade80;font-size:12px;font-weight:700;padding:4px 14px;border-radius:20px}
+
+    .stock-item{background:#1a1a1a;border:1px solid #222;border-radius:14px;padding:14px 16px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+    .si-left .si-ticker{font-size:16px;font-weight:800;letter-spacing:1px}
+    .si-left .si-name{font-size:11px;color:#555;margin-top:2px;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .si-left .si-tag{font-size:10px;background:#052e16;color:#4ade80;padding:2px 7px;border-radius:10px;margin-top:4px;display:inline-block}
+    .si-right{text-align:left}
+    .si-sector{font-size:11px;color:#555;margin-top:2px}
+
+    .search-box{width:100%;padding:12px 16px;background:#1a1a1a;border:1px solid #333;border-radius:12px;color:#fff;font-size:15px;outline:none;margin-bottom:14px;text-transform:uppercase}
+    .search-box::placeholder{text-transform:none;color:#555}
+    .search-box:focus{border-color:#4ade80}
+
+    .empty{text-align:center;color:#555;padding:40px;font-size:14px}
+  </style>
+</head>
+<body>
+
+<div class="tabs">
+  <button class="tab active" onclick="showTab('check')">🔍 فحص سهم</button>
+  <button class="tab"        onclick="showTab('list')">📋 الأسهم الحلال (45)</button>
+</div>
+
+<!-- ══════════ صفحة الفحص ══════════ -->
+<div id="page-check">
+  <div class="logo">🦅</div>
+  <h1>Falcon Sharia</h1>
+  <p class="sub">فلتر شرعي — صفر تطهير فقط</p>
+
+  <div class="card">
+    <input id="ticker" type="text" placeholder="رمز السهم... PANW" maxlength="8"
+           autocomplete="off" autocorrect="off" autocapitalize="characters"
+           onkeydown="if(event.key==='Enter')doCheck()">
+    <button class="check-btn" onclick="doCheck()">فحص</button>
+
+    <div class="result" id="result">
+      <div class="r-icon"     id="r-icon"></div>
+      <div class="r-ticker"   id="r-ticker"></div>
+      <div class="r-decision" id="r-decision"></div>
+      <div class="r-reason"   id="r-reason"></div>
+      <div class="r-purif"    id="r-purif"></div>
+    </div>
+  </div>
+
+  <div class="hist-section" id="hist-section" style="display:none">
+    <div class="hist-title">آخر عمليات البحث</div>
+    <div id="hist-list"></div>
+  </div>
+</div>
+
+<!-- ══════════ صفحة القائمة ══════════ -->
+<div id="page-list">
+  <div class="list-header">
+    <div class="lh-logo">🦅</div>
+    <h2>الأسهم الحلال النقية</h2>
+    <span class="lh-count">✅ 45 سهم — تطهير 0%</span>
+  </div>
+
+  <input class="search-box" type="text" placeholder="ابحث عن سهم..." oninput="filterList(this.value)" autocomplete="off">
+
+  <div id="stock-list"></div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════
+//  بيانات الأسهم الشرعية — تطهير 0% مؤكد
+// ══════════════════════════════════════════════
+const ZERO = {
+  // أمن سيبراني
+  "PANW": "Cybersecurity", "CRWD": "Cybersecurity", "FTNT": "Cybersecurity",
+  "ZS":   "Cybersecurity", "OKTA": "Cybersecurity", "S":    "Cybersecurity",
+  "CYBR": "Cybersecurity",
+  // برامج هندسية
+  "ANSS": "Engineering SW", "SNPS": "Engineering SW", "CDNS": "Engineering SW",
+  "PTC":  "Engineering SW",
+  // SaaS / B2B
+  "NOW":  "SaaS", "WDAY": "SaaS", "VEEV": "SaaS", "DDOG": "SaaS",
+  "MDB":  "SaaS", "SNOW": "SaaS", "ZM":   "SaaS", "TWLO": "SaaS",
+  "HUBS": "SaaS", "PEGA": "SaaS",
+  // خدمات تقنية
+  "EPAM": "Tech Services", "GLOB": "Tech Services", "EXLS": "Tech Services",
+  // رعاية صحية
+  "IDXX": "Medtech", "PODD": "Medtech", "INSP": "Medtech",
+  "HOLX": "Medtech", "NTRA": "Medtech", "IRTC": "Medtech", "AXNX": "Medtech",
+  // صناعية
+  "ROK":  "Industrial", "NOVT": "Industrial", "ESAB": "Industrial",
+  "NDSN": "Industrial", "RRX":  "Industrial",
+  // طاقة متجددة
+  "CWEN": "Renewables", "BEP":  "Renewables", "ARRY": "Renewables",
+  "FLNC": "Renewables",
+  // مواد
+  "FERG": "Materials", "AZEK": "Materials", "TREX": "Materials",
+};
+
+const HARAM_PURIF = {
+  "AAPL":1.5,"MSFT":1.2,"NVDA":1.0,"GOOGL":0.8,"GOOG":0.8,
+  "AMZN":0.5,"META":0.4,"TSLA":0.3,"NFLX":0.6,"ADBE":0.7,
+  "CRM":0.5,"ORCL":0.9,"QCOM":0.4,"TXN":0.6,"AVGO":0.3,
+  "AMAT":0.3,"LRCX":0.4,"KLAC":0.3,"MCHP":0.5,
+  "AMGN":1.1,"GILD":0.8,"REGN":0.5,"VRTX":0.4,"BIIB":0.6,
+  "MRNA":0.3,"ILMN":0.4,
+};
+
+const HARAM = new Set([
+  "JPM","BAC","WFC","C","GS","MS","USB","PNC","TFC","COF",
+  "AXP","DFS","SYF","ALLY","MET","PRU","AIG","AFL","ALL",
+  "CB","TRV","PGR","PM","MO","BTI","STZ","BUD","TAP",
+  "MGM","WYNN","LVS","CZR","PENN","DKNG","LMT","RTX",
+  "NOC","GD","BA","HRL",
+]);
+
+function checkTicker(t){
+  if(HARAM.has(t))
+    return {halal:false,decision:"SHARIA_REJECTED",reason:"حرام",purif:null};
+  if(HARAM_PURIF[t])
+    return {halal:false,decision:"SHARIA_REJECTED",reason:`نسبة تطهير ${HARAM_PURIF[t]}%`,purif:HARAM_PURIF[t]};
+  if(ZERO[t])
+    return {halal:true, decision:"BUY_ALLOWED",reason:"حلال — تطهير 0%",purif:0.0};
+  return {halal:false,decision:"SHARIA_REJECTED",reason:"غير موجود في القائمة المعتمدة",purif:null};
+}
+
+// ══════════ فحص السهم ══════════
+const history=[];
+function doCheck(){
+  const t=document.getElementById("ticker").value.trim().toUpperCase();
+  if(!t)return;
+  const r=checkTicker(t);
+  const el=document.getElementById("result");
+  el.className="result "+(r.halal?"halal":"haram");
+  el.style.display="block";
+  document.getElementById("r-icon").textContent    = r.halal?"✅":"❌";
+  document.getElementById("r-ticker").textContent  = t;
+  document.getElementById("r-decision").textContent= r.decision;
+  document.getElementById("r-reason").textContent  = r.reason;
+  document.getElementById("r-purif").textContent   = r.purif!==null?`نسبة التطهير: ${r.purif}%`:"";
+  addHistory(t,r);
+}
+
+function addHistory(t,r){
+  const i=history.findIndex(h=>h.t===t);
+  if(i!==-1)history.splice(i,1);
+  history.unshift({t,r});
+  if(history.length>8)history.pop();
+  const sec=document.getElementById("hist-section");
+  const lst=document.getElementById("hist-list");
+  sec.style.display=history.length?"block":"none";
+  lst.innerHTML=history.map(h=>`
+    <div class="hist-item" onclick="document.getElementById('ticker').value='${h.t}';doCheck()">
+      <span class="hist-ticker">${h.t}</span>
+      <span class="badge ${h.r.halal?'b-halal':'b-haram'}">${h.r.halal?'✅ حلال':'❌ مرفوض'}</span>
+    </div>`).join("");
+}
+
+// ══════════ قائمة الأسهم ══════════
+function renderList(filter=""){
+  const f=filter.toUpperCase();
+  const items=Object.entries(ZERO).filter(([t])=>!f||t.includes(f));
+  const lst=document.getElementById("stock-list");
+  if(!items.length){lst.innerHTML='<div class="empty">لا توجد نتائج</div>';return;}
+  lst.innerHTML=items.map(([t,sec])=>`
+    <div class="stock-item" onclick="showTab('check');document.getElementById('ticker').value='${t}';doCheck()">
+      <div class="si-left">
+        <div class="si-ticker">${t}</div>
+        <div class="si-sector">${sec}</div>
+        <div class="si-tag">✅ حلال 0%</div>
+      </div>
+      <div class="si-right" style="font-size:18px">›</div>
+    </div>`).join("");
+}
+renderList();
+
+function filterList(v){renderList(v);}
+
+// ══════════ تبويبات ══════════
+function showTab(name){
+  document.getElementById("page-check").style.display=name==="check"?"flex":"none";
+  document.getElementById("page-list").style.display =name==="list" ?"block":"none";
+  document.querySelectorAll(".tab").forEach((t,i)=>{
+    t.classList.toggle("active",(name==="check"&&i===0)||(name==="list"&&i===1));
+  });
+}
+</script>
+</body>
+</html>
