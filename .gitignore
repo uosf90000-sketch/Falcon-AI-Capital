@@ -10,3 +10,6 @@ logs/
 # mjabud game
 mjabud/node_modules/
 mjabud/dist/
+
+# Claude Code
+.claude/
