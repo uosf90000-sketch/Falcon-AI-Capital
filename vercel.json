@@ -1,0 +1,5 @@
+{
+  "buildCommand": "cd mjabud && npm install && npm run build",
+  "outputDirectory": "mjabud/dist",
+  "installCommand": "echo skip"
+}
